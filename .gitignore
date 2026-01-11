@@ -1,0 +1,13 @@
+build/
+.vscode/
+*.user
+*.sln
+*.vcxproj*
+*.pdb
+*.obj
+*.ilk
+*.ipch
+*.db
+*.opendb
+*.cache
+*.log
