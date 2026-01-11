@@ -30,6 +30,25 @@ static bool rayTri(const glm::vec3& ro, const glm::vec3& rd,
 	return true;
 }
 
+static glm::vec3 barycentricFromPoint(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& p) {
+	glm::vec3 v0 = b - a;
+	glm::vec3 v1 = c - a;
+	glm::vec3 v2 = p - a;
+	float d00 = glm::dot(v0, v0);
+	float d01 = glm::dot(v0, v1);
+	float d11 = glm::dot(v1, v1);
+	float d20 = glm::dot(v2, v0);
+	float d21 = glm::dot(v2, v1);
+	float denom = d00 * d11 - d01 * d01;
+	if (glm::abs(denom) < 1e-12f) {
+		return glm::vec3(1.0f, 0.0f, 0.0f);
+	}
+	float v = (d11 * d20 - d01 * d21) / denom;
+	float w = (d00 * d21 - d01 * d20) / denom;
+	float u = 1.0f - v - w;
+	return glm::vec3(u, v, w);
+}
+
 bool Raycast::raycastMesh(const Mesh& mesh, const glm::vec3& ro, const glm::vec3& rd, RayHit& outHit) {
 	outHit = {};
 	const std::vector<glm::vec3>& pos = mesh.positions();
@@ -79,6 +98,40 @@ bool Raycast::raycastMesh(const Mesh& mesh, const glm::vec3& ro, const glm::vec3
 	outHit.triIndex = bestTri;
 	outHit.bary = bestBary;
 	outHit.position = p;
+	outHit.normal = n;
+	return true;
+}
+
+bool Raycast::nearestOnMesh(const Mesh& mesh, const glm::vec3& p, RayHit& outHit, float maxDist) {
+	outHit = {};
+	const std::vector<glm::vec3>& pos = mesh.positions();
+	const std::vector<unsigned int>& ind = mesh.indices();
+	if (pos.empty() || ind.empty()) return false;
+
+	// BVH built lazily per mesh
+	static const Mesh* cachedMesh = nullptr;
+	static Bvh bvh;
+	if (cachedMesh != &mesh) {
+		bvh.build(mesh);
+		cachedMesh = &mesh;
+	}
+
+	int tri = -1;
+	glm::vec3 cp(0.0f);
+	glm::vec3 n(0.0f, 1.0f, 0.0f);
+	if (!bvh.nearestTriangle(p, tri, cp, n, maxDist)) return false;
+
+	unsigned int i0 = ind[(size_t)tri * 3 + 0];
+	unsigned int i1 = ind[(size_t)tri * 3 + 1];
+	unsigned int i2 = ind[(size_t)tri * 3 + 2];
+	if (i0 >= pos.size() || i1 >= pos.size() || i2 >= pos.size()) return false;
+	glm::vec3 bary = barycentricFromPoint(pos[i0], pos[i1], pos[i2], cp);
+
+	outHit.hit = true;
+	outHit.t = 0.0f;
+	outHit.triIndex = tri;
+	outHit.bary = bary;
+	outHit.position = cp;
 	outHit.normal = n;
 	return true;
 }

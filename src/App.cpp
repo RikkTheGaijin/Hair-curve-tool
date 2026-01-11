@@ -351,6 +351,7 @@ void App::drawSidePanel() {
 	GuideSettings& gs = m_scene->guideSettings();
 	bool lengthChanged = ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
 	bool stepsChanged = ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
+	ImGui::Checkbox("Mirror mode", &gs.mirrorMode);
 	if (lengthChanged || stepsChanged) {
 		m_scene->guides().applyLengthStepsToSelected(gs.defaultLength, gs.defaultSteps);
 	}

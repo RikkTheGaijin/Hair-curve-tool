@@ -41,6 +41,7 @@ bool Serialization::saveScene(const Scene& scene, const Camera& camera, const st
 	Json::Value jgs;
 	jgs["defaultLength"] = gs.defaultLength;
 	jgs["defaultSteps"] = gs.defaultSteps;
+	jgs["mirrorMode"] = gs.mirrorMode;
 	jgs["enableSimulation"] = gs.enableSimulation;
 	jgs["enableMeshCollision"] = gs.enableMeshCollision;
 	jgs["enableCurveCollision"] = gs.enableCurveCollision;
@@ -121,6 +122,7 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 	if (jgs.isObject()) {
 		gs.defaultLength = jgs.get("defaultLength", gs.defaultLength).asFloat();
 		gs.defaultSteps = jgs.get("defaultSteps", gs.defaultSteps).asInt();
+		gs.mirrorMode = jgs.get("mirrorMode", gs.mirrorMode).asBool();
 		gs.enableSimulation = jgs.get("enableSimulation", gs.enableSimulation).asBool();
 		gs.enableMeshCollision = jgs.get("enableMeshCollision", gs.enableMeshCollision).asBool();
 		gs.enableCurveCollision = jgs.get("enableCurveCollision", gs.enableCurveCollision).asBool();

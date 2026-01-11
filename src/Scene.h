@@ -7,6 +7,8 @@
 #include <memory>
 #include <string>
 
+#include <unordered_map>
+
 class MayaCameraController;
 
 struct RenderSettings {
@@ -85,6 +87,16 @@ private:
 
 	bool m_gravityOverrideHeld = false;
 	float m_gravityOverrideValue = 9.81f;
+
+	// Mirror mode is transient: only applies to curves created while enabled, and only while they remain selected.
+	std::unordered_map<int, int> m_mirrorPeer;
+
+	static glm::vec3 mirrorX(const glm::vec3& p);
+	void clearMirrorPairs();
+	void pruneMirrorPairsToSelection();
+	int mirrorPeerOf(int curveIdx) const;
+	void setMirrorPair(int a, int b);
+	void clearMirrorPairFor(int curveIdx);
 
 	void beginDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);
 	void updateDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);

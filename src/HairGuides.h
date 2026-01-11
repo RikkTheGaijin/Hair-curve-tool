@@ -9,6 +9,7 @@ class Mesh;
 struct GuideSettings {
 	float defaultLength = 0.3f;
 	int defaultSteps = 12;
+	bool mirrorMode = false;
 	bool enableSimulation = false;       // Master simulation toggle
 	bool enableMeshCollision = true;
 	bool enableCurveCollision = false;

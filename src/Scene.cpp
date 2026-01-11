@@ -10,6 +10,56 @@
 
 #include <algorithm>
 
+glm::vec3 Scene::mirrorX(const glm::vec3& p) {
+	return glm::vec3(-p.x, p.y, p.z);
+}
+
+void Scene::clearMirrorPairs() {
+	m_mirrorPeer.clear();
+}
+
+int Scene::mirrorPeerOf(int curveIdx) const {
+	auto it = m_mirrorPeer.find(curveIdx);
+	if (it == m_mirrorPeer.end()) return -1;
+	return it->second;
+}
+
+void Scene::setMirrorPair(int a, int b) {
+	if (a < 0 || b < 0 || a == b) return;
+	m_mirrorPeer[a] = b;
+	m_mirrorPeer[b] = a;
+}
+
+void Scene::clearMirrorPairFor(int curveIdx) {
+	auto it = m_mirrorPeer.find(curveIdx);
+	if (it == m_mirrorPeer.end()) return;
+	int other = it->second;
+	m_mirrorPeer.erase(curveIdx);
+	if (other >= 0) {
+		auto it2 = m_mirrorPeer.find(other);
+		if (it2 != m_mirrorPeer.end() && it2->second == curveIdx) {
+			m_mirrorPeer.erase(it2);
+		}
+	}
+}
+
+void Scene::pruneMirrorPairsToSelection() {
+	// Mirror mode only applies while both curves in the pair remain selected.
+	for (auto it = m_mirrorPeer.begin(); it != m_mirrorPeer.end(); ) {
+		int a = it->first;
+		int b = it->second;
+		bool aSel = (a >= 0) ? m_guides.isCurveSelected((size_t)a) : false;
+		bool bSel = (b >= 0) ? m_guides.isCurveSelected((size_t)b) : false;
+		if (!aSel || !bSel) {
+			int key = a;
+			++it;
+			clearMirrorPairFor(key);
+			continue;
+		}
+		++it;
+	}
+}
+
 Scene::Scene() {
 	// Maya-ish defaults
 	m_guideSettings.defaultLength = 0.3f;
@@ -57,6 +107,7 @@ bool Scene::loadMeshFromObj(const std::string& path) {
 	}
 	m_meshPath = path;
 	m_meshTexturePath.clear();
+	clearMirrorPairs();
 	m_meshBoundsMin = m_mesh->boundsMin();
 	m_meshBoundsMax = m_mesh->boundsMax();
 	m_meshVersion++;
@@ -129,6 +180,7 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 	if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
 		if (m_hoverCurve < 0) {
 			m_guides.deselectAll();
+			clearMirrorPairs();
 		}
 		// In either case, don't treat SHIFT+MMB as curve creation.
 		return;
@@ -140,6 +192,7 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 		if (m_hoverCurve >= 0) {
 			const bool additive = io.KeyCtrl;
 			m_guides.selectCurve(m_hoverCurve, additive);
+			pruneMirrorPairsToSelection();
 		}
 		return;
 	}
@@ -173,7 +226,37 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 
 		int newIdx = m_guides.addCurveOnMesh(*m_mesh, hit.triIndex, hit.bary, hit.position, hit.normal, m_guideSettings);
 		if (newIdx >= 0) {
+			// Mirror mode: only affects newly created curves while it is enabled.
+			const bool mirrorOn = m_guideSettings.mirrorMode;
+			if (mirrorOn && glm::abs(hit.position.x) > 1e-5f) {
+				RayHit mh;
+				glm::vec3 mp = mirrorX(hit.position);
+				if (Raycast::nearestOnMesh(*m_mesh, mp, mh)) {
+					int mirrorIdx = m_guides.addCurveOnMesh(*m_mesh, mh.triIndex, mh.bary, mh.position, mh.normal, m_guideSettings);
+					if (mirrorIdx >= 0) {
+						// Mirror the initial shape 1:1 across the plane X=0.
+						const HairCurve& src = m_guides.curve((size_t)newIdx);
+						HairCurve& dst = m_guides.curve((size_t)mirrorIdx);
+						const size_t n = glm::min(src.points.size(), dst.points.size());
+						for (size_t i = 0; i < n; i++) {
+							glm::vec3 p = mirrorX(src.points[i]);
+							dst.points[i] = p;
+							dst.prevPoints[i] = p;
+						}
+						dst.segmentRestLen = src.segmentRestLen;
+						setMirrorPair(newIdx, mirrorIdx);
+
+						// Select both, but keep the clicked curve as active.
+						m_guides.selectCurve(newIdx, false);
+						m_guides.selectCurve(mirrorIdx, true);
+						m_guides.selectCurve(newIdx, true);
+						return;
+					}
+				}
+			}
+
 			m_guides.selectCurve(newIdx, false);
+			pruneMirrorPairsToSelection();
 		}
 	}
 }
@@ -187,6 +270,12 @@ float Scene::effectiveGravityForCurve(size_t curveIdx) const {
 	// If not, apply to all selected curves (more intuitive than doing nothing).
 	if (active >= 0) {
 		if ((int)curveIdx == active) return m_gravityOverrideValue;
+		if (m_guideSettings.mirrorMode) {
+			int peer = mirrorPeerOf(active);
+			if (peer >= 0 && (int)curveIdx == peer) {
+				return m_gravityOverrideValue;
+			}
+		}
 		return g;
 	}
 	return m_gravityOverrideValue;
@@ -242,6 +331,21 @@ void Scene::updateDragVertex(const MayaCameraController& camera, int viewportW, 
 	}
 
 	m_guides.moveControlPoint(m_dragCurve, m_dragVert, p);
+
+	// Mirror dragging (only while both curves stay selected).
+	if (m_guideSettings.mirrorMode) {
+		int peer = mirrorPeerOf(m_dragCurve);
+		if (peer >= 0) {
+			bool peerSel = m_guides.isCurveSelected((size_t)peer);
+			bool selfSel = m_guides.isCurveSelected((size_t)m_dragCurve);
+			if (!peerSel || !selfSel) {
+				clearMirrorPairFor(m_dragCurve);
+			} else {
+				glm::vec3 mp = mirrorX(p);
+				m_guides.moveControlPoint(peer, m_dragVert, mp);
+			}
+		}
+	}
 }
 
 void Scene::endDragVertex() {
@@ -251,6 +355,8 @@ void Scene::endDragVertex() {
 }
 
 void Scene::deleteSelectedCurves() {
+	// Deleting curves changes indices; mirror pairs are transient anyway.
+	clearMirrorPairs();
 	std::vector<int> sel = m_guides.selectedCurves();
 	if (sel.empty()) return;
 	// Remove in descending order to keep indices stable.

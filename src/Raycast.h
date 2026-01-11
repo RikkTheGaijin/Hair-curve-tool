@@ -15,4 +15,5 @@ struct RayHit {
 
 namespace Raycast {
 	bool raycastMesh(const Mesh& mesh, const glm::vec3& ro, const glm::vec3& rd, RayHit& outHit);
+	bool nearestOnMesh(const Mesh& mesh, const glm::vec3& p, RayHit& outHit, float maxDist = 1e30f);
 }
