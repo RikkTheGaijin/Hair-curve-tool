@@ -56,6 +56,7 @@ bool Scene::loadMeshFromObj(const std::string& path) {
 		return false;
 	}
 	m_meshPath = path;
+	m_meshTexturePath.clear();
 	m_meshBoundsMin = m_mesh->boundsMin();
 	m_meshBoundsMax = m_mesh->boundsMax();
 	m_meshVersion++;

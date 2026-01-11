@@ -25,6 +25,7 @@ bool Serialization::saveScene(const Scene& scene, const Camera& camera, const st
 	Json::Value root;
 	root["version"] = 1;
 	root["meshPath"] = scene.meshPath();
+	root["meshTexturePath"] = scene.meshTexturePath();
 
 	// Camera
 	{
@@ -89,6 +90,7 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 	}
 
 	std::string meshPath = root.get("meshPath", "").asString();
+	std::string meshTexturePath = root.get("meshTexturePath", "").asString();
 	if (!meshPath.empty()) {
 		scene.loadMeshFromObj(meshPath);
 	}
@@ -98,6 +100,8 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 		if (outCameraRestored) *outCameraRestored = false;
 		return true;
 	}
+
+	scene.setMeshTexturePath(meshTexturePath);
 
 	bool cameraRestored = false;
 	if (camera) {

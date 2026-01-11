@@ -44,6 +44,8 @@ add_executable(HairTool
   src/MayaCameraController.h
   src/GL.cpp
   src/GL.h
+  src/ImageLoader.cpp
+  src/ImageLoader.h
   src/Renderer.cpp
   src/Renderer.h
   src/Mesh.cpp

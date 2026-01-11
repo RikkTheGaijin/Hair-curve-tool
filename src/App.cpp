@@ -327,9 +327,20 @@ void App::drawSidePanel() {
 	ImGui::TextUnformatted("Mesh");
 	ImGui::Separator();
 	ImGui::Text("OBJ: %s", m_scene->meshPath().empty() ? "(none)" : m_scene->meshPath().c_str());
+	ImGui::Text("Texture: %s", m_scene->meshTexturePath().empty() ? "(none)" : m_scene->meshTexturePath().c_str());
 	if (ImGui::Button("Import OBJ")) actionImportObj();
 	ImGui::SameLine();
-	if (ImGui::Button("Reset Camera")) m_camera->reset();
+	if (ImGui::Button("Load Texture")) {
+		std::string texPath;
+		if (FileDialog::openFile(texPath, "Image Files\0*.png;*.jpg;*.jpeg\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0")) {
+			if (m_renderer && m_renderer->loadMeshTexture(texPath)) {
+				m_scene->setMeshTexturePath(texPath);
+				showToast(std::string("Loaded Texture (") + texPath + ")");
+			} else {
+				showToast("Failed to load texture");
+			}
+		}
+	}
 	ImGui::SameLine();
 	if (ImGui::Button("Reset Settings")) resetSettingsToDefaults();
 
@@ -432,6 +443,7 @@ void App::actionImportObj() {
 	if (!FileDialog::openFile(path, "OBJ Files\0*.obj\0All Files\0*.*\0")) return;
 	m_lastObjPath = path;
 	m_scene->loadMeshFromObj(path);
+	if (m_renderer) m_renderer->clearMeshTexture();
 	m_camera->frameBounds(m_scene->meshBoundsMin(), m_scene->meshBoundsMax());
 }
 
@@ -461,6 +473,12 @@ void App::actionLoadScene() {
 	m_lastScenePath = path;
 	bool cameraRestored = false;
 	Serialization::loadScene(*m_scene, m_camera.get(), path, &cameraRestored);
+	if (m_renderer) {
+		m_renderer->clearMeshTexture();
+		if (!m_scene->meshTexturePath().empty()) {
+			m_renderer->loadMeshTexture(m_scene->meshTexturePath());
+		}
+	}
 	// User preference: nothing selected after loading.
 	m_scene->guides().deselectAll();
 	// Fallback behavior for older scenes without saved camera state.

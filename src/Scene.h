@@ -22,6 +22,8 @@ public:
 
 	bool loadMeshFromObj(const std::string& path);
 	const std::string& meshPath() const { return m_meshPath; }
+	const std::string& meshTexturePath() const { return m_meshTexturePath; }
+	void setMeshTexturePath(const std::string& path) { m_meshTexturePath = path; }
 	const Mesh* mesh() const { return m_mesh.get(); }
 	Mesh* mesh() { return m_mesh.get(); }
 
@@ -62,6 +64,7 @@ public:
 private:
 	std::unique_ptr<Mesh> m_mesh;
 	std::string m_meshPath;
+	std::string m_meshTexturePath;
 	glm::vec3 m_meshBoundsMin{0.0f};
 	glm::vec3 m_meshBoundsMax{0.0f};
 	uint64_t m_meshVersion = 0;

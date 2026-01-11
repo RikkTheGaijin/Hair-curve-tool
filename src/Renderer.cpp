@@ -4,6 +4,7 @@
 #include "Mesh.h"
 #include "HairGuides.h"
 #include "Camera.h"
+#include "ImageLoader.h"
 
 #include <glad/glad.h>
 #include <glm/gtc/type_ptr.hpp>
@@ -15,17 +16,20 @@ static const char* kMeshVs = R"(
 #version 330 core
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNrm;
+layout(location=2) in vec2 aUv;
 
 uniform mat4 uViewProj;
 uniform mat4 uModel;
 
 out vec3 vNrm;
 out vec3 vPos;
+out vec2 vUv;
 
 void main(){
 	vec4 wp = uModel * vec4(aPos, 1.0);
 	vPos = wp.xyz;
 	vNrm = mat3(uModel) * aNrm;
+	vUv = aUv;
 	gl_Position = uViewProj * wp;
 }
 )";
@@ -34,9 +38,12 @@ static const char* kMeshFs = R"(
 #version 330 core
 in vec3 vNrm;
 in vec3 vPos;
+in vec2 vUv;
 out vec4 oColor;
 
 uniform vec3 uCamPos;
+uniform int uUseTex;
+uniform sampler2D uTex;
 
 void main(){
 	vec3 n = normalize(vNrm);
@@ -47,7 +54,8 @@ void main(){
 	vec3 h = normalize(l + v);
 	float spec = pow(max(dot(n, h), 0.0), 48.0);
 	vec3 base = vec3(0.55, 0.55, 0.56);
-	vec3 col = base * (0.25 + 0.75 * ndl) + vec3(0.10) * spec;
+	vec3 albedo = (uUseTex != 0) ? texture(uTex, vUv).rgb : base;
+	vec3 col = albedo * (0.25 + 0.75 * ndl) + vec3(0.10) * spec;
 	oColor = vec4(col, 1.0);
 }
 )";
@@ -155,6 +163,36 @@ void Renderer::init() {
 	createGrid();
 }
 
+bool Renderer::loadMeshTexture(const std::string& path) {
+	clearMeshTexture();
+
+	int w = 0, h = 0;
+	std::vector<unsigned char> pixels;
+	if (!ImageLoader::loadRGBA8(path, w, h, pixels) || w <= 0 || h <= 0 || pixels.empty()) {
+		return false;
+	}
+
+	glGenTextures(1, &m_meshTexture);
+	glBindTexture(GL_TEXTURE_2D, m_meshTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	return true;
+}
+
+void Renderer::clearMeshTexture() {
+	if (m_meshTexture) {
+		glDeleteTextures(1, &m_meshTexture);
+		m_meshTexture = 0;
+	}
+}
+
 void Renderer::drawGrid(const Camera& camera, const glm::vec3& center, float scale) const {
 	(void)center;
 	(void)scale;
@@ -180,7 +218,19 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 		glUniformMatrix4fv(glGetUniformLocation(m_meshProgram, "uModel"), 1, GL_FALSE, glm::value_ptr(model));
 		glm::vec3 camPos = camera.position();
 		glUniform3fv(glGetUniformLocation(m_meshProgram, "uCamPos"), 1, glm::value_ptr(camPos));
+
+		int useTex = (m_meshTexture != 0) ? 1 : 0;
+		glUniform1i(glGetUniformLocation(m_meshProgram, "uUseTex"), useTex);
+		if (useTex) {
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, m_meshTexture);
+			glUniform1i(glGetUniformLocation(m_meshProgram, "uTex"), 0);
+		}
+
 		scene.mesh()->draw();
+		if (useTex) {
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
 		glUseProgram(0);
 	}
 

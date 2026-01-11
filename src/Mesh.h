@@ -12,6 +12,7 @@ public:
 
 	const std::vector<glm::vec3>& positions() const { return m_positions; }
 	const std::vector<glm::vec3>& normals() const { return m_normals; }
+	const std::vector<glm::vec2>& uvs() const { return m_uvs; }
 	const std::vector<unsigned int>& indices() const { return m_indices; }
 
 	glm::vec3 boundsMin() const { return m_boundsMin; }
@@ -20,6 +21,7 @@ public:
 private:
 	std::vector<glm::vec3> m_positions;
 	std::vector<glm::vec3> m_normals;
+	std::vector<glm::vec2> m_uvs;
 	std::vector<unsigned int> m_indices;
 
 	glm::vec3 m_boundsMin{0};
