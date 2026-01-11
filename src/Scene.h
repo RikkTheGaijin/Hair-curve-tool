@@ -46,6 +46,11 @@ public:
 	void deleteSelectedCurves();
 	void resetSettingsToDefaults();
 
+	void setGravityOverrideHeld(bool held) { m_gravityOverrideHeld = held; }
+	bool gravityOverrideHeld() const { return m_gravityOverrideHeld; }
+	float gravityOverrideValue() const { return m_gravityOverrideValue; }
+	float effectiveGravityForCurve(size_t curveIdx) const;
+
 	int hoverCurve() const { return m_hoverCurve; }
 	bool hoverHighlightActive() const { return m_hoverHighlightActive; }
 
@@ -74,6 +79,9 @@ private:
 	glm::vec3 m_dragPlaneNormal{0.0f, 0.0f, 1.0f};
 	int m_hoverCurve = -1;
 	bool m_hoverHighlightActive = false;
+
+	bool m_gravityOverrideHeld = false;
+	float m_gravityOverrideValue = 9.81f;
 
 	void beginDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);
 	void updateDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);

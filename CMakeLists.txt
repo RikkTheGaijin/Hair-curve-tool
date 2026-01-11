@@ -35,6 +35,8 @@ add_executable(HairTool
   src/main.cpp
   src/App.cpp
   src/App.h
+  src/UserSettings.cpp
+  src/UserSettings.h
   src/Camera.cpp
   src/Camera.h
   src/MayaCameraController.cpp

@@ -233,15 +233,21 @@ void CudaHairSolver::step(Scene& scene, float dt) {
 	// Keep roots attached
 	guides.updatePinnedRootsFromMesh(*scene.mesh());
 
-	// Pack all curves
-	m_curveCount = (int)guides.curveCount();
+	// Pack only selected curves (freeze unselected curves)
+	std::vector<int> curveMap;
+	curveMap.reserve(guides.curveCount());
+	for (size_t i = 0; i < guides.curveCount(); i++) {
+		if (guides.isCurveSelected(i)) curveMap.push_back((int)i);
+	}
+
+	m_curveCount = (int)curveMap.size();
 	m_h_curveOffsets.resize((size_t)m_curveCount);
 	m_h_curveCounts.resize((size_t)m_curveCount);
 	m_h_restLen.resize((size_t)m_curveCount);
 
 	int totalParticles = 0;
 	for (int c = 0; c < m_curveCount; c++) {
-		const HairCurve& hc = guides.curve((size_t)c);
+		const HairCurve& hc = guides.curve((size_t)curveMap[(size_t)c]);
 		m_h_curveOffsets[(size_t)c] = totalParticles;
 		m_h_curveCounts[(size_t)c] = (int)hc.points.size();
 		m_h_restLen[(size_t)c] = (hc.segmentRestLen > 0.0f) ? hc.segmentRestLen : (gs.defaultLength / (float)(glm::max(2, (int)hc.points.size()) - 1));
@@ -254,7 +260,7 @@ void CudaHairSolver::step(Scene& scene, float dt) {
 	m_h_pinned.assign((size_t)totalParticles, (unsigned char)0);
 
 	for (int c = 0; c < m_curveCount; c++) {
-		const HairCurve& hc = guides.curve((size_t)c);
+		const HairCurve& hc = guides.curve((size_t)curveMap[(size_t)c]);
 		int base = m_h_curveOffsets[(size_t)c];
 		for (int i = 0; i < (int)hc.points.size(); i++) {
 			glm::vec3 p = hc.points[(size_t)i];
@@ -278,10 +284,16 @@ void CudaHairSolver::step(Scene& scene, float dt) {
 
 	// Roots are marked as pinned; integrate/damping kernels will skip them.
 
-	// GPU integration (match CPU scale: mesh imported at 0.01 => gravity 0.0981 m/s^2)
+	// GPU integration
+	float g = gs.gravity;
+	if (scene.gravityOverrideHeld()) {
+		// GPU solver uses one gravity value for all simulated curves.
+		g = scene.gravityOverrideValue();
+	}
+	g = fmaxf(0.0f, g);
 	int threads = 256;
 	int blocks = (totalParticles + threads - 1) / threads;
-	integrateKernel<<<blocks, threads>>>((float*)m_d_pos, (float*)m_d_prev, (const unsigned char*)m_d_pinned, totalParticles, dt, 0.0f, -9.81f * 0.01f, 0.0f);
+	integrateKernel<<<blocks, threads>>>((float*)m_d_pos, (float*)m_d_prev, (const unsigned char*)m_d_pinned, totalParticles, dt, 0.0f, -g, 0.0f);
 	checkCudaKernel("integrateKernel");
 
 	int iters = std::clamp(gs.solverIterations, 1, 64);
@@ -315,7 +327,7 @@ void CudaHairSolver::step(Scene& scene, float dt) {
 
 	// Apply to scene curves
 	for (int c = 0; c < m_curveCount; c++) {
-		HairCurve& hc = guides.curve((size_t)c);
+		HairCurve& hc = guides.curve((size_t)curveMap[(size_t)c]);
 		int base = m_h_curveOffsets[(size_t)c];
 		for (int i = 0; i < (int)hc.points.size(); i++) {
 			hc.points[(size_t)i] = glm::vec3(

@@ -117,10 +117,21 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 		}
 	}
 
-	// SHIFT+LMB toggles curve selection (no dragging)
+	// SHIFT+MMB on empty space deselects all
+	if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+		if (m_hoverCurve < 0) {
+			m_guides.deselectAll();
+		}
+		// In either case, don't treat SHIFT+MMB as curve creation.
+		return;
+	}
+
+	// SHIFT+LMB selects a curve (single selection)
+	// SHIFT+CTRL+LMB adds to selection (and makes it active)
 	if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 		if (m_hoverCurve >= 0) {
-			m_guides.toggleCurveSelected(m_hoverCurve);
+			const bool additive = io.KeyCtrl;
+			m_guides.selectCurve(m_hoverCurve, additive);
 		}
 		return;
 	}
@@ -157,6 +168,20 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 			m_guides.selectCurve(newIdx, false);
 		}
 	}
+}
+
+float Scene::effectiveGravityForCurve(size_t curveIdx) const {
+	float g = m_guideSettings.gravity;
+	if (!m_gravityOverrideHeld) return g;
+
+	int active = m_guides.activeCurve();
+	// If there's an active curve, only it gets the override.
+	// If not, apply to all selected curves (more intuitive than doing nothing).
+	if (active >= 0) {
+		if ((int)curveIdx == active) return m_gravityOverrideValue;
+		return g;
+	}
+	return m_gravityOverrideValue;
 }
 
 void Scene::beginDragVertex(const MayaCameraController& camera, int viewportW, int viewportH) {

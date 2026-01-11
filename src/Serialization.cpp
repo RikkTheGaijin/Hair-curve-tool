@@ -34,6 +34,7 @@ bool Serialization::saveScene(const Scene& scene, const std::string& path) {
 	jgs["enableCurveCollision"] = gs.enableCurveCollision;
 	jgs["enableGpuSolver"] = gs.enableGpuSolver;
 	jgs["collisionThickness"] = gs.collisionThickness;
+	jgs["collisionFriction"] = gs.collisionFriction;
 	jgs["solverIterations"] = gs.solverIterations;
 	jgs["gravity"] = gs.gravity;
 	jgs["damping"] = gs.damping;
@@ -92,10 +93,12 @@ bool Serialization::loadScene(Scene& scene, const std::string& path) {
 	if (jgs.isObject()) {
 		gs.defaultLength = jgs.get("defaultLength", gs.defaultLength).asFloat();
 		gs.defaultSteps = jgs.get("defaultSteps", gs.defaultSteps).asInt();
+		gs.enableSimulation = jgs.get("enableSimulation", gs.enableSimulation).asBool();
 		gs.enableMeshCollision = jgs.get("enableMeshCollision", gs.enableMeshCollision).asBool();
 		gs.enableCurveCollision = jgs.get("enableCurveCollision", gs.enableCurveCollision).asBool();
 		gs.enableGpuSolver = jgs.get("enableGpuSolver", gs.enableGpuSolver).asBool();
 		gs.collisionThickness = jgs.get("collisionThickness", gs.collisionThickness).asFloat();
+		gs.collisionFriction = jgs.get("collisionFriction", gs.collisionFriction).asFloat();
 		gs.solverIterations = jgs.get("solverIterations", gs.solverIterations).asInt();
 		gs.gravity = jgs.get("gravity", gs.gravity).asFloat();
 		gs.damping = jgs.get("damping", gs.damping).asFloat();

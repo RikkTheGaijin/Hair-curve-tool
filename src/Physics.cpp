@@ -114,8 +114,6 @@ void Physics::step(Scene& scene, float dt) {
 	scene.guides().updatePinnedRootsFromMesh(*scene.mesh());
 
 	GuideSettings& gs = scene.guideSettings();
-	// Mesh positions are already scaled to meters at import time, so gravity is standard m/s^2.
-	glm::vec3 gravity(0.0f, -glm::max(0.0f, gs.gravity), 0.0f);
 
 	const bool dragging = scene.isDragging();
 	const int dragCurve = scene.dragCurve();
@@ -125,6 +123,11 @@ void Physics::step(Scene& scene, float dt) {
 		if (!scene.guides().isCurveSelected(ci)) {
 			continue; // freeze unselected curves
 		}
+
+		// Mesh positions are already scaled to meters at import time, so gravity is standard m/s^2.
+		float g = glm::max(0.0f, scene.effectiveGravityForCurve(ci));
+		glm::vec3 gravity(0.0f, -g, 0.0f);
+
 		HairCurve& c = scene.guides().curve(ci);
 		if (c.points.size() < 2) continue;
 

@@ -1,0 +1,17 @@
+#pragma once
+
+#include <string>
+
+class Scene;
+
+namespace UserSettings {
+	// Loads persistent user settings (tool UI + guide/render settings).
+	// Returns true if a settings file was found and parsed.
+	bool load(Scene& scene, float viewportBg[3], bool& showControlsOverlay);
+
+	// Saves persistent user settings (tool UI + guide/render settings).
+	bool save(const Scene& scene, const float viewportBg[3], bool showControlsOverlay);
+
+	// For debugging / UI (optional): absolute path to the settings file.
+	std::string settingsPath();
+}

@@ -28,7 +28,9 @@ private:
 
 	void drawMenuBar();
 	void drawSidePanel();
+	void drawControlsOverlay();
 	void handleViewportInput();
+	void resetSettingsToDefaults();
 
 	void actionImportObj();
 	void actionSaveScene();
@@ -47,6 +49,7 @@ private:
 
 	// UI state
 	bool m_showDemoWindow = false;
+	bool m_showControlsOverlay = true;
 	std::string m_lastObjPath;
 	std::string m_lastScenePath;
 	std::string m_lastPlyPath;

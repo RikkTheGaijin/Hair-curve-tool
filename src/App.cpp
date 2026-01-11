@@ -8,6 +8,7 @@
 #include "Serialization.h"
 #include "ExportPly.h"
 #include "GpuSolver.h"
+#include "UserSettings.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -17,6 +18,9 @@
 #include <imgui_impl_opengl3.h>
 
 #include <cstdio>
+#include <filesystem>
+#include <algorithm>
+#include <cctype>
 
 App::~App() = default;
 
@@ -36,6 +40,9 @@ bool App::init() {
 	m_renderer->init();
 	m_camera->setViewport(m_windowWidth, m_windowHeight);
 	m_camera->reset();
+
+	// Persistent user settings
+	UserSettings::load(*m_scene, m_viewportBg, m_showControlsOverlay);
 
 	return true;
 }
@@ -129,6 +136,7 @@ void App::run() {
 		beginFrame();
 		drawMenuBar();
 		drawSidePanel();
+		drawControlsOverlay();
 		handleViewportInput();
 		ImGui::Render();
 
@@ -155,6 +163,8 @@ void App::run() {
 }
 
 void App::shutdown() {
+	// Save persistent user settings before tearing down.
+	UserSettings::save(*m_scene, m_viewportBg, m_showControlsOverlay);
 	shutdownImGui();
 	if (m_window) glfwDestroyWindow(m_window);
 	glfwTerminate();
@@ -191,6 +201,7 @@ void App::drawMenuBar() {
 
 			if (ImGui::BeginMenu("View")) {
 				ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
+				ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenuBar();
@@ -198,6 +209,29 @@ void App::drawMenuBar() {
 	}
 	ImGui::End();
 	ImGui::PopStyleVar(2);
+}
+
+void App::drawControlsOverlay() {
+	if (!m_showControlsOverlay) return;
+
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	// Bottom-left, with a small margin.
+	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 10.0f, vp->Pos.y + vp->Size.y - 10.0f), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+	ImGui::SetNextWindowBgAlpha(0.35f);
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+	if (ImGui::Begin("##ControlsOverlay", nullptr, flags)) {
+		ImGui::TextUnformatted("Controls");
+		ImGui::Separator();
+		ImGui::BulletText("MMB: Create new curve on mesh");
+		ImGui::BulletText("LMB: Drag selected curve vertices");
+		ImGui::BulletText("SHIFT + LMB: Select/deselect curve");
+		ImGui::BulletText("SHIFT (hover): Highlight curve (red)");
+		ImGui::BulletText("DEL: Delete selected curve(s)");
+		ImGui::BulletText("ALT + LMB/MMB/RMB: Camera orbit/pan/zoom");
+	}
+	ImGui::End();
 }
 
 void App::drawSidePanel() {
@@ -211,6 +245,8 @@ void App::drawSidePanel() {
 	if (ImGui::Button("Import OBJ")) actionImportObj();
 	ImGui::SameLine();
 	if (ImGui::Button("Reset Camera")) m_camera->reset();
+	ImGui::SameLine();
+	if (ImGui::Button("Reset Settings")) resetSettingsToDefaults();
 
 	ImGui::Spacing();
 	ImGui::TextUnformatted("Guide Settings");
@@ -228,6 +264,7 @@ void App::drawSidePanel() {
 	ImGui::Checkbox("Enable Mesh Collision", &gs.enableMeshCollision);
 	ImGui::Checkbox("Enable Curve Collision", &gs.enableCurveCollision);
 	ImGui::SliderFloat("Collision Thickness", &gs.collisionThickness, 0.0001f, 0.02f, "%.4f m");
+	ImGui::SliderFloat("Friction", &gs.collisionFriction, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderInt("Solver Iterations", &gs.solverIterations, 1, 32);
 	ImGui::SliderFloat("Gravity", &gs.gravity, 0.0f, 30.0f, "%.2f m/s^2");
 	ImGui::SliderFloat("Damping", &gs.damping, 0.90f, 1.0f, "%.3f");
@@ -251,6 +288,13 @@ void App::handleViewportInput() {
 	// Don't handle camera input if ImGui wants the mouse (over a window/menu)
 	if (io.WantCaptureMouse) return;
 
+	// Temporary gravity override while holding G
+	if (!io.WantCaptureKeyboard) {
+		m_scene->setGravityOverrideHeld(ImGui::IsKeyDown(ImGuiKey_G));
+	} else {
+		m_scene->setGravityOverrideHeld(false);
+	}
+
 	const bool alt = io.KeyAlt;
 	const bool lmb = ImGui::IsMouseDown(ImGuiMouseButton_Left);
 	const bool mmb = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
@@ -262,6 +306,22 @@ void App::handleViewportInput() {
 	if (!alt) {
 		m_scene->handleViewportMouse(*m_camera, m_windowWidth, m_windowHeight);
 	}
+
+	// Keyboard actions (only when ImGui doesn't want the keyboard)
+	if (!io.WantCaptureKeyboard) {
+		if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+			m_scene->deleteSelectedCurves();
+		}
+	}
+}
+
+void App::resetSettingsToDefaults() {
+	m_scene->resetSettingsToDefaults();
+	m_viewportBg[0] = 0.22f;
+	m_viewportBg[1] = 0.22f;
+	m_viewportBg[2] = 0.22f;
+	m_showControlsOverlay = true;
+	m_showDemoWindow = false;
 }
 
 void App::actionImportObj() {
@@ -275,6 +335,19 @@ void App::actionImportObj() {
 void App::actionSaveScene() {
 	std::string path;
 	if (!FileDialog::saveFile(path, "Scene Files\0*.json\0All Files\0*.*\0")) return;
+	// Ensure the file has a .json extension (Windows file dialog can return paths without extension).
+	{
+		std::filesystem::path p(path);
+		std::string ext = p.extension().string();
+		std::string extLower = ext;
+		std::transform(extLower.begin(), extLower.end(), extLower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+		if (extLower.empty()) {
+			p += ".json";
+		} else if (extLower != ".json") {
+			p.replace_extension(".json");
+		}
+		path = p.string();
+	}
 	m_lastScenePath = path;
 	Serialization::saveScene(*m_scene, path);
 }
@@ -284,6 +357,10 @@ void App::actionLoadScene() {
 	if (!FileDialog::openFile(path, "Scene Files\0*.json\0All Files\0*.*\0")) return;
 	m_lastScenePath = path;
 	Serialization::loadScene(*m_scene, path);
+	// After loading, select the first curve (if any) so vertices are visible and physics only affects a small subset by default.
+	if (m_scene->guides().curveCount() > 0) {
+		m_scene->guides().selectCurve(0, false);
+	}
 	m_camera->frameBounds(m_scene->meshBoundsMin(), m_scene->meshBoundsMax());
 }
 
