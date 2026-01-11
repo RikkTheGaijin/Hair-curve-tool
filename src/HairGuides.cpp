@@ -330,7 +330,7 @@ void HairGuideSet::buildCurveRenderPoints(const HairCurve& c, std::vector<glm::v
 	outPoints.push_back(c.points.back());
 }
 
-void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int lineProgram, float pointSizePx, int hoverCurve, bool hoverHighlightRed) const {
+void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int lineProgram, float pointSizePx, float deselectedOpacity, int hoverCurve, bool hoverHighlightRed) const {
 	glUseProgram(lineProgram);
 	glUniformMatrix4fv(glGetUniformLocation(lineProgram, "uViewProj"), 1, GL_FALSE, glm::value_ptr(viewProj));
 
@@ -355,8 +355,11 @@ void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int linePr
 		packed.clear();
 		packed.reserve(renderPts.size() * 7);
 		const bool isHover = hoverHighlightRed && ((int)ci == hoverCurve);
-		glm::vec4 baseCol(0.90f, 0.75f, 0.22f, 1.0f); // Maya-ish yellow/orange
-		glm::vec4 hoverCol(1.0f, 0.15f, 0.15f, 1.0f);
+		deselectedOpacity = glm::clamp(deselectedOpacity, 0.0f, 1.0f);
+		const bool selected = isCurveSelected(ci);
+		float a = isHover ? 1.0f : (selected ? 1.0f : deselectedOpacity);
+		glm::vec4 baseCol(0.90f, 0.75f, 0.22f, a); // Maya-ish yellow/orange
+		glm::vec4 hoverCol(1.0f, 0.15f, 0.15f, a);
 		glm::vec4 col = isHover ? hoverCol : baseCol;
 
 		for (size_t i = 0; i < renderPts.size(); i++) {

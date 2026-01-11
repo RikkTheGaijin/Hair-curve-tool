@@ -29,6 +29,7 @@ private:
 	void drawMenuBar();
 	void drawSidePanel();
 	void drawControlsOverlay();
+	void drawGuideCounterOverlay();
 	void drawToastOverlay();
 	void handleViewportInput();
 	void resetSettingsToDefaults();
@@ -64,4 +65,8 @@ private:
 	// Transient UI message
 	std::string m_toastText;
 	float m_toastTimeRemaining = 0.0f;
+
+	// UI counters (throttled)
+	int m_cachedGuideCount = 0;
+	float m_guideCounterAccum = 0.0f;
 };

@@ -235,8 +235,25 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 	}
 
 	if (rs.showGuides) {
+		// Guides can be translucent (deselected opacity), so enable alpha blending.
+		GLboolean wasBlend = glIsEnabled(GL_BLEND);
+		GLboolean wasDepthMask = GL_TRUE;
+		glGetBooleanv(GL_DEPTH_WRITEMASK, &wasDepthMask);
+		GLint oldSrcRGB = 0, oldDstRGB = 0, oldSrcA = 0, oldDstA = 0;
+		glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrcRGB);
+		glGetIntegerv(GL_BLEND_DST_RGB, &oldDstRGB);
+		glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldSrcA);
+		glGetIntegerv(GL_BLEND_DST_ALPHA, &oldDstA);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glDepthMask(GL_FALSE);
+
 		// Draw control points and interpolated lines
 		const HairGuideSet& guides = scene.guides();
-		guides.drawDebugLines(camera.viewProj(), m_lineProgram, rs.guidePointSizePx, scene.hoverCurve(), scene.hoverHighlightActive());
+		guides.drawDebugLines(camera.viewProj(), m_lineProgram, rs.guidePointSizePx, rs.deselectedCurveOpacity, scene.hoverCurve(), scene.hoverHighlightActive());
+
+		glDepthMask(wasDepthMask);
+		glBlendFuncSeparate(oldSrcRGB, oldDstRGB, oldSrcA, oldDstA);
+		if (!wasBlend) glDisable(GL_BLEND);
 	}
 }

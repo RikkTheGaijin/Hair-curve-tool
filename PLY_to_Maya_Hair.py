@@ -101,7 +101,7 @@ def _read_ply_vertices(path):
 # Curve creation helpers
 # -----------------------------------------------------------------------------
 
-def _create_curve(points, degree, parent, name_prefix='webStrand'):
+def _create_curve(points, degree, parent, name_prefix='GuideCurve'):
     m_points = om.MPointArray()
     for p in points:
         m_points.append(om.MPoint(p[0], p[1], p[2]))

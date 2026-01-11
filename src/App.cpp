@@ -149,6 +149,7 @@ void App::run() {
 		drawMenuBar();
 		drawSidePanel();
 		drawControlsOverlay();
+		drawGuideCounterOverlay();
 		drawToastOverlay();
 		handleViewportInput();
 		ImGui::Render();
@@ -298,6 +299,30 @@ void App::drawControlsOverlay() {
 	ImGui::End();
 }
 
+void App::drawGuideCounterOverlay() {
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+
+	// Refresh the value at a relaxed cadence to avoid needless work.
+	m_guideCounterAccum += ImGui::GetIO().DeltaTime;
+	if (m_guideCounterAccum >= 1.0f) {
+		m_guideCounterAccum = 0.0f;
+		m_cachedGuideCount = (int)m_scene->guides().curveCount();
+	}
+
+	ImGui::SetNextWindowPos(
+		ImVec2(vp->Pos.x + vp->Size.x - 10.0f, vp->Pos.y + vp->Size.y - 10.0f),
+		ImGuiCond_Always,
+		ImVec2(1.0f, 1.0f));
+	ImGui::SetNextWindowBgAlpha(0.35f);
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+	if (ImGui::Begin("##GuideCounter", nullptr, flags)) {
+		ImGui::Text("Guides: %d", m_cachedGuideCount);
+	}
+	ImGui::End();
+}
+
 void App::drawSidePanel() {
 	ImGuiViewport* vp = ImGui::GetMainViewport();
 	// Default: top-right, but the window is still movable; we will clamp to stay visible.
@@ -378,6 +403,7 @@ void App::drawSidePanel() {
 	ImGui::Checkbox("Show Grid", &m_scene->renderSettings().showGrid);
 	ImGui::Checkbox("Show Mesh", &m_scene->renderSettings().showMesh);
 	ImGui::Checkbox("Show Guides", &m_scene->renderSettings().showGuides);
+	ImGui::SliderFloat("Deselected Opacity", &m_scene->renderSettings().deselectedCurveOpacity, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderFloat("Guide Point Size", &m_scene->renderSettings().guidePointSizePx, 1.0f, 16.0f, "%.1f px");
 
 	ImGui::End();

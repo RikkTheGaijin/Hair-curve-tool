@@ -68,6 +68,7 @@ bool UserSettings::load(Scene& scene, float viewportBg[3], bool& showControlsOve
 		rs.showGrid = jrs.get("showGrid", rs.showGrid).asBool();
 		rs.showMesh = jrs.get("showMesh", rs.showMesh).asBool();
 		rs.showGuides = jrs.get("showGuides", rs.showGuides).asBool();
+		rs.deselectedCurveOpacity = jrs.get("deselectedCurveOpacity", rs.deselectedCurveOpacity).asFloat();
 		rs.guidePointSizePx = jrs.get("guidePointSizePx", rs.guidePointSizePx).asFloat();
 	}
 
@@ -124,6 +125,7 @@ bool UserSettings::save(const Scene& scene, const float viewportBg[3], bool show
 	jrs["showGrid"] = rs.showGrid;
 	jrs["showMesh"] = rs.showMesh;
 	jrs["showGuides"] = rs.showGuides;
+	jrs["deselectedCurveOpacity"] = rs.deselectedCurveOpacity;
 	jrs["guidePointSizePx"] = rs.guidePointSizePx;
 	root["renderSettings"] = jrs;
 

@@ -64,7 +64,7 @@ public:
 	void removeCurves(const std::vector<int>& curveIndicesDescending);
 
 	// Rendering
-	void drawDebugLines(const glm::mat4& viewProj, unsigned int lineProgram, float pointSizePx, int hoverCurve = -1, bool hoverHighlightRed = false) const;
+	void drawDebugLines(const glm::mat4& viewProj, unsigned int lineProgram, float pointSizePx, float deselectedOpacity = 1.0f, int hoverCurve = -1, bool hoverHighlightRed = false) const;
 
 	// Simulation helpers
 	void updatePinnedRootsFromMesh(const Mesh& mesh);

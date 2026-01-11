@@ -16,6 +16,7 @@ struct RenderSettings {
 	bool showMesh = true;
 	bool showGuides = true;
 	float guidePointSizePx = 6.0f;
+	float deselectedCurveOpacity = 1.0f;
 };
 
 class Scene {
