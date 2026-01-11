@@ -1,6 +1,7 @@
 #include "HairGuides.h"
 
 #include "Mesh.h"
+#include "Log.h"
 
 #include <glad/glad.h>
 #include <glm/gtc/type_ptr.hpp>
@@ -40,7 +41,7 @@ int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3
 		} else {
 			c.root.triIndex = -1;
 			c.root.bary = glm::vec3(1.0f, 0.0f, 0.0f);
-			printf("WARNING: addCurveOnMesh received invalid triIndex=%d (mesh tris=%zu). Root will be unpinned.\n", triIndex, triCount);
+			HT_WARN("WARNING: addCurveOnMesh received invalid triIndex=%d (mesh tris=%zu). Root will be unpinned.\n", triIndex, triCount);
 		}
 	}
 
@@ -52,20 +53,20 @@ int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3
 	
 	if (glm::any(glm::isnan(hitPos)) || glm::any(glm::isinf(hitPos)) ||
 	    glm::any(glm::isnan(hitNormal)) || glm::any(glm::isinf(hitNormal))) {
-		printf("ERROR: Invalid hitPos or hitNormal in addCurveOnMesh\n");
+		HT_ERR("ERROR: Invalid hitPos or hitNormal in addCurveOnMesh\n");
 		return -1;
 	}
 
 	float normalLen = glm::length(hitNormal);
 	glm::vec3 dir;
 	if (normalLen < 1e-6f) {
-		printf("ERROR: hitNormal is zero or near-zero (len=%.6f), using default direction\n", normalLen);
+		HT_ERR("ERROR: hitNormal is zero or near-zero (len=%.6f), using default direction\n", normalLen);
 		dir = glm::vec3(0.0f, 1.0f, 0.0f);
 	} else {
 		dir = hitNormal / normalLen;
 		// Check if normalization created NaN
 		if (glm::any(glm::isnan(dir)) || glm::any(glm::isinf(dir))) {
-			printf("ERROR: Normalization created NaN/inf, using default direction\n");
+			HT_ERR("ERROR: Normalization created NaN/inf, using default direction\n");
 			dir = glm::vec3(0.0f, 1.0f, 0.0f);
 		}
 	}
@@ -94,10 +95,7 @@ int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3
 		c.points[(size_t)i] = p;
 		c.prevPoints[(size_t)i] = p;
 		
-		if (i < 3) {  // Log first 3 vertices
-			printf("  Vertex %d: pos=(%.6f, %.6f, %.6f), prevPos=(%.6f, %.6f, %.6f)\n", 
-			       i, p.x, p.y, p.z, p.x, p.y, p.z);
-		}
+		// (debug logging removed)
 	}
 
 	// (Debug logging removed)
@@ -223,7 +221,7 @@ void HairGuideSet::moveControlPoint(int curveIdx, int vertIdx, const glm::vec3& 
 
 	// Validate input position
 	if (glm::any(glm::isnan(worldPos)) || glm::any(glm::isinf(worldPos))) {
-		printf("ERROR: Invalid worldPos in moveControlPoint\n");
+		HT_ERR("ERROR: Invalid worldPos in moveControlPoint\n");
 		return;
 	}
 
@@ -404,7 +402,7 @@ void HairGuideSet::updatePinnedRootsFromMesh(const Mesh& mesh) {
 		if ((size_t)ti >= triCount) {
 			// Defensive: prevent out-of-bounds access which can create NaNs/Inf.
 			c.root.triIndex = -1;
-			printf("WARNING: Curve root had invalid triIndex=%d (mesh tris=%zu). Unpinning root.\n", ti, triCount);
+			HT_WARN("WARNING: Curve root had invalid triIndex=%d (mesh tris=%zu). Unpinning root.\n", ti, triCount);
 			continue;
 		}
 		const unsigned int i0 = ind[(size_t)ti * 3 + 0];
@@ -412,7 +410,7 @@ void HairGuideSet::updatePinnedRootsFromMesh(const Mesh& mesh) {
 		const unsigned int i2 = ind[(size_t)ti * 3 + 2];
 		if (i0 >= pos.size() || i1 >= pos.size() || i2 >= pos.size()) {
 			c.root.triIndex = -1;
-			printf("WARNING: Curve root triangle indices out of range. Unpinning root.\n");
+			HT_WARN("WARNING: Curve root triangle indices out of range. Unpinning root.\n");
 			continue;
 		}
 		glm::vec3 b = c.root.bary;
@@ -428,7 +426,7 @@ void HairGuideSet::updatePinnedRootsFromMesh(const Mesh& mesh) {
 
 		if (glm::any(glm::isnan(p)) || glm::any(glm::isinf(p))) {
 			c.root.triIndex = -1;
-			printf("WARNING: Root evaluation produced NaN/Inf. Unpinning root.\n");
+			HT_WARN("WARNING: Root evaluation produced NaN/Inf. Unpinning root.\n");
 			continue;
 		}
 		if (!c.points.empty()) {
@@ -445,10 +443,83 @@ void HairGuideSet::updatePinnedRootsFromMesh(const Mesh& mesh) {
 			if (c.points.size() > 1) {
 				glm::vec3 newVel = c.points[1] - c.prevPoints[1];
 				if (glm::length(newVel - oldVel) > 0.001f) {
-					printf("  WARNING: Root update changed vertex 1 velocity from (%.3f,%.3f,%.3f) to (%.3f,%.3f,%.3f)\n",
+					HT_LOG("  WARNING: Root update changed vertex 1 velocity from (%.3f,%.3f,%.3f) to (%.3f,%.3f,%.3f)\n",
 					       oldVel.x, oldVel.y, oldVel.z, newVel.x, newVel.y, newVel.z);
 				}
 			}
 		}
+	}
+}
+
+static glm::vec3 resampleOnPolyline(const std::vector<glm::vec3>& pts, const std::vector<float>& cumLen, float s) {
+	if (pts.size() < 2) return pts.empty() ? glm::vec3(0) : pts[0];
+	if (s <= 0.0f) return pts[0];
+	float total = cumLen.back();
+	if (total <= 1e-8f) return pts[0];
+	if (s >= total) return pts.back();
+
+	// Find segment
+	size_t hi = 1;
+	while (hi < cumLen.size() && cumLen[hi] < s) hi++;
+	if (hi >= cumLen.size()) return pts.back();
+	size_t lo = hi - 1;
+	float a = cumLen[lo];
+	float b = cumLen[hi];
+	float t = (b > a) ? (s - a) / (b - a) : 0.0f;
+	return glm::mix(pts[lo], pts[hi], glm::clamp(t, 0.0f, 1.0f));
+}
+
+static void resampleCurveInPlace(HairCurve& c, float newLength, int newSteps) {
+	newSteps = glm::clamp(newSteps, 2, 256);
+	newLength = glm::max(0.001f, newLength);
+	if (c.points.size() < 2) return;
+
+	std::vector<glm::vec3> oldPts = c.points;
+	std::vector<float> cum;
+	cum.resize(oldPts.size());
+	cum[0] = 0.0f;
+	for (size_t i = 1; i < oldPts.size(); i++) {
+		cum[i] = cum[i - 1] + glm::length(oldPts[i] - oldPts[i - 1]);
+	}
+	float oldLen = cum.back();
+
+	glm::vec3 root = oldPts[0];
+	glm::vec3 lastDir(0, 1, 0);
+	if (oldPts.size() >= 2) {
+		glm::vec3 d = oldPts.back() - oldPts[oldPts.size() - 2];
+		float dl = glm::length(d);
+		if (dl > 1e-6f) lastDir = d / dl;
+	}
+
+	std::vector<glm::vec3> newPts;
+	newPts.resize((size_t)newSteps);
+	for (int i = 0; i < newSteps; i++) {
+		float t = (newSteps == 1) ? 0.0f : (float)i / (float)(newSteps - 1);
+		float targetS = newLength * t;
+		glm::vec3 p;
+		if (oldLen > 1e-6f) {
+			if (targetS <= oldLen) {
+				p = resampleOnPolyline(oldPts, cum, targetS);
+			} else {
+				p = oldPts.back() + lastDir * (targetS - oldLen);
+			}
+		} else {
+			// Degenerate curve: rebuild as a straight line along lastDir.
+			p = root + lastDir * targetS;
+		}
+		newPts[(size_t)i] = p;
+	}
+
+	// Preserve root exactly
+	newPts[0] = root;
+	c.points = std::move(newPts);
+	c.prevPoints = c.points;
+	c.segmentRestLen = newLength / (float)(newSteps - 1);
+}
+
+void HairGuideSet::applyLengthStepsToSelected(float newLength, int newSteps) {
+	for (size_t ci = 0; ci < m_curves.size(); ci++) {
+		if (!isCurveSelected(ci)) continue;
+		resampleCurveInPlace(m_curves[ci], newLength, newSteps);
 	}
 }

@@ -5,6 +5,8 @@
 
 #include "Bvh.h"
 
+#include "Log.h"
+
 #include <vector>
 
 static bool rayTriMT(const glm::vec3& ro, const glm::vec3& rd,
@@ -155,14 +157,14 @@ void Physics::step(Scene& scene, float dt) {
 			if (glm::any(glm::isnan(c.points[i])) || glm::any(glm::isinf(c.points[i]))) {
 				hasInvalid = true;
 				invalidIdx = i;
-				printf("ERROR: Curve %zu vertex %zu has NaN/inf: (%.3f, %.3f, %.3f)\n", 
+				HT_WARN("ERROR: Curve %zu vertex %zu has NaN/inf: (%.3f, %.3f, %.3f)\n", 
 				       ci, i, c.points[i].x, c.points[i].y, c.points[i].z);
 				break;
 			}
 		}
 		if (hasInvalid) {
 			// Reset this curve to prevent further corruption
-			printf("Removing corrupted curve %zu\n", ci);
+			HT_WARN("Removing corrupted curve %zu\n", ci);
 			scene.guides().removeCurve((int)ci);
 			continue;
 		}
@@ -266,7 +268,7 @@ void Physics::step(Scene& scene, float dt) {
 			// Only print every 60 frames to reduce spam
 			static int warnCounter = 0;
 			if (warnCounter++ % 60 == 0) {
-				printf("WARNING: Curve %zu - maxVel=%.2f m/s, maxDist=%.2f m (may disappear soon)\n", ci, maxVel, maxDist);
+				HT_WARN("WARNING: Curve %zu - maxVel=%.2f m/s, maxDist=%.2f m (may disappear soon)\n", ci, maxVel, maxDist);
 			}
 		}
 	}

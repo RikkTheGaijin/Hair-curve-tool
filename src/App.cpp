@@ -226,9 +226,12 @@ void App::drawControlsOverlay() {
 		ImGui::Separator();
 		ImGui::BulletText("MMB: Create new curve on mesh");
 		ImGui::BulletText("LMB: Drag selected curve vertices");
-		ImGui::BulletText("SHIFT + LMB: Select/deselect curve");
+		ImGui::BulletText("SHIFT + LMB: Select single curve");
+		ImGui::BulletText("SHIFT + CTRL + LMB: Add to selection (active)");
 		ImGui::BulletText("SHIFT (hover): Highlight curve (red)");
+		ImGui::BulletText("SHIFT + MMB (empty): Deselect all");
 		ImGui::BulletText("DEL: Delete selected curve(s)");
+		ImGui::BulletText("Hold G: Temporary gravity override");
 		ImGui::BulletText("ALT + LMB/MMB/RMB: Camera orbit/pan/zoom");
 	}
 	ImGui::End();
@@ -253,8 +256,11 @@ void App::drawSidePanel() {
 	ImGui::Separator();
 
 	GuideSettings& gs = m_scene->guideSettings();
-	ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
-	ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
+	bool lengthChanged = ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
+	bool stepsChanged = ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
+	if (lengthChanged || stepsChanged) {
+		m_scene->guides().applyLengthStepsToSelected(gs.defaultLength, gs.defaultSteps);
+	}
 	
 	ImGui::Spacing();
 	ImGui::TextUnformatted("Simulation");

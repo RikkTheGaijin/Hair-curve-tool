@@ -53,6 +53,7 @@ public:
 	void selectCurve(int curveIdx, bool additive);
 	void toggleCurveSelected(int curveIdx);
 	std::vector<int> selectedCurves() const;
+	void applyLengthStepsToSelected(float newLength, int newSteps);
 
 	// Interaction
 	bool pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& camPos, const glm::mat4& viewProj, int& outCurve, int& outVert, bool selectedOnly = false) const;

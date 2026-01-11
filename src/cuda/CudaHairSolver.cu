@@ -16,15 +16,17 @@
 
 #include <glm/glm.hpp>
 
+#include "Log.h"
+
 static inline void checkCuda(cudaError_t err, const char* msg) {
 	if (err == cudaSuccess) return;
-	std::fprintf(stderr, "[CUDA] %s: %s\n", msg, cudaGetErrorString(err));
+	HT_WARN("[CUDA] %s: %s\n", msg, cudaGetErrorString(err));
 }
 
 static inline void checkCudaKernel(const char* msg) {
 	cudaError_t err = cudaGetLastError();
 	if (err == cudaSuccess) return;
-	std::fprintf(stderr, "[CUDA] %s: %s\n", msg, cudaGetErrorString(err));
+	HT_WARN("[CUDA] %s: %s\n", msg, cudaGetErrorString(err));
 }
 
 bool CudaHairSolver::isCudaRuntimeAvailable() {
@@ -38,7 +40,7 @@ void CudaHairSolver::init() {
 	cudaSetDevice(0);
 	cudaDeviceProp prop{};
 	cudaGetDeviceProperties(&prop, 0);
-	std::fprintf(stderr, "[CUDA] Using device: %s (sm_%d%d)\n", prop.name, prop.major, prop.minor);
+	HT_LOG("[CUDA] Using device: %s (sm_%d%d)\n", prop.name, prop.major, prop.minor);
 	m_ready = true;
 }
 
