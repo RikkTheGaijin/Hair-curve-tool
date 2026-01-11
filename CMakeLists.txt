@@ -72,6 +72,23 @@ add_executable(HairTool
   src/MeshDistanceField.h
 )
 
+# Timestamp build version (1.0.YYYYMMDDHHMM)
+set(HAIRTOOL_VERSION_MAJOR 1)
+set(HAIRTOOL_VERSION_MINOR 0)
+set(HAIRTOOL_VERSION_HEADER "${CMAKE_BINARY_DIR}/generated/HairToolVersion.h")
+
+add_custom_target(HairToolVersion ALL
+  COMMAND ${CMAKE_COMMAND}
+    -DOUT_HEADER="${HAIRTOOL_VERSION_HEADER}"
+    -DMAJOR=${HAIRTOOL_VERSION_MAJOR}
+    -DMINOR=${HAIRTOOL_VERSION_MINOR}
+    -P "${CMAKE_SOURCE_DIR}/cmake/UpdateBuildVersion.cmake"
+  BYPRODUCTS "${HAIRTOOL_VERSION_HEADER}"
+  COMMENT "Updating build version header"
+)
+
+add_dependencies(HairTool HairToolVersion)
+
 if (HAIRTOOL_ENABLE_CUDA)
   target_sources(HairTool PRIVATE
     src/cuda/CudaHairSolver.h
@@ -84,6 +101,7 @@ if (HAIRTOOL_ENABLE_CUDA)
 endif()
 
 target_include_directories(HairTool PRIVATE src)
+target_include_directories(HairTool PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 target_link_libraries(HairTool PRIVATE
   glfw

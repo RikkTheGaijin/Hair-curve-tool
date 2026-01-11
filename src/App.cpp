@@ -10,6 +10,8 @@
 #include "GpuSolver.h"
 #include "UserSettings.h"
 
+#include "HairToolVersion.h"
+
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -69,6 +71,11 @@ bool App::initWindow() {
 	if (!m_window) {
 		std::fprintf(stderr, "Failed to create GLFW window\n");
 		return false;
+	}
+	// Show auto-incrementing build version in the title bar.
+	{
+		std::string title = std::string("Hair Tool v") + HAIRTOOL_VERSION_STRING;
+		glfwSetWindowTitle(m_window, title.c_str());
 	}
 	if (m_windowMaximized) {
 		glfwMaximizeWindow(m_window);
@@ -185,8 +192,8 @@ void App::drawToastOverlay() {
 	if (m_toastTimeRemaining <= 0.0f || m_toastText.empty()) return;
 
 	ImGuiViewport* vp = ImGui::GetMainViewport();
-	// Top-center, slightly below the menu bar.
-	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + 38.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+	// Top-center, inside the work area (below menu bar) so it's never covered.
+	ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 8.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
 	ImGui::SetNextWindowBgAlpha(0.75f);
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
 		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -234,43 +241,33 @@ void App::endFrame() {
 }
 
 void App::drawMenuBar() {
-	ImGuiViewport* viewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y));
-	ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, 0));
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
-	if (ImGui::Begin("##MainMenuBar", nullptr, flags)) {
-		if (ImGui::BeginMenuBar()) {
-			if (ImGui::BeginMenu("File")) {
-				if (ImGui::MenuItem("Import OBJ...")) actionImportObj();
-				if (ImGui::MenuItem("Save Scene...")) actionSaveScene();
-				if (ImGui::MenuItem("Load Scene...")) actionLoadScene();
-				if (ImGui::MenuItem("Export Curves (PLY)...")) actionExportCurvesPly();
-				ImGui::Separator();
-				if (ImGui::MenuItem("Quit")) m_shouldClose = true;
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("View")) {
-				ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
-				ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
-				if (ImGui::BeginMenu("UI Scale")) {
-					bool s1 = (m_uiScale == 1.0f);
-					bool s15 = (m_uiScale == 1.5f);
-					bool s2 = (m_uiScale == 2.0f);
-					if (ImGui::MenuItem("1.0x", nullptr, s1)) m_uiScale = 1.0f;
-					if (ImGui::MenuItem("1.5x", nullptr, s15)) m_uiScale = 1.5f;
-					if (ImGui::MenuItem("2.0x", nullptr, s2)) m_uiScale = 2.0f;
-					ImGui::EndMenu();
-				}
-				ImGui::EndMenu();
-			}
-			ImGui::EndMenuBar();
+	if (ImGui::BeginMainMenuBar()) {
+		if (ImGui::BeginMenu("File")) {
+			if (ImGui::MenuItem("Import OBJ...")) actionImportObj();
+			if (ImGui::MenuItem("Save Scene...")) actionSaveScene();
+			if (ImGui::MenuItem("Load Scene...")) actionLoadScene();
+			if (ImGui::MenuItem("Export Curves (PLY)...")) actionExportCurvesPly();
+			ImGui::Separator();
+			if (ImGui::MenuItem("Quit")) m_shouldClose = true;
+			ImGui::EndMenu();
 		}
+
+		if (ImGui::BeginMenu("View")) {
+			ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
+			ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
+			if (ImGui::BeginMenu("UI Scale")) {
+				bool s1 = (m_uiScale == 1.0f);
+				bool s15 = (m_uiScale == 1.5f);
+				bool s2 = (m_uiScale == 2.0f);
+				if (ImGui::MenuItem("1.0x", nullptr, s1)) m_uiScale = 1.0f;
+				if (ImGui::MenuItem("1.5x", nullptr, s15)) m_uiScale = 1.5f;
+				if (ImGui::MenuItem("2.0x", nullptr, s2)) m_uiScale = 2.0f;
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+		ImGui::EndMainMenuBar();
 	}
-	ImGui::End();
-	ImGui::PopStyleVar(2);
 }
 
 void App::drawControlsOverlay() {
