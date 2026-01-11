@@ -33,6 +33,9 @@ bool App::init() {
 	m_camera = std::make_unique<MayaCameraController>();
 	m_renderer = std::make_unique<Renderer>();
 
+	// Load persistent user settings early so we can restore window size before creating the window.
+	UserSettings::load(*m_scene, m_viewportBg, m_showControlsOverlay, m_uiScale, m_windowWidth, m_windowHeight, m_windowMaximized);
+
 	if (!initWindow()) return false;
 	if (!initGL()) return false;
 	if (!initImGui()) return false;
@@ -40,9 +43,8 @@ bool App::init() {
 	m_renderer->init();
 	m_camera->setViewport(m_windowWidth, m_windowHeight);
 	m_camera->reset();
-
-	// Persistent user settings
-	UserSettings::load(*m_scene, m_viewportBg, m_showControlsOverlay);
+	// Force style scaling to be applied on the first frame.
+	m_uiScaleApplied = 1.0f;
 
 	return true;
 }
@@ -67,6 +69,9 @@ bool App::initWindow() {
 	if (!m_window) {
 		std::fprintf(stderr, "Failed to create GLFW window\n");
 		return false;
+	}
+	if (m_windowMaximized) {
+		glfwMaximizeWindow(m_window);
 	}
 
 	glfwMakeContextCurrent(m_window);
@@ -193,7 +198,14 @@ void App::drawToastOverlay() {
 
 void App::shutdown() {
 	// Save persistent user settings before tearing down.
-	UserSettings::save(*m_scene, m_viewportBg, m_showControlsOverlay);
+	int w = m_windowWidth;
+	int h = m_windowHeight;
+	bool maximized = false;
+	if (m_window) {
+		glfwGetWindowSize(m_window, &w, &h);
+		maximized = (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE);
+	}
+	UserSettings::save(*m_scene, m_viewportBg, m_showControlsOverlay, m_uiScale, w, h, maximized);
 	shutdownImGui();
 	if (m_window) glfwDestroyWindow(m_window);
 	glfwTerminate();
@@ -203,6 +215,17 @@ void App::beginFrame() {
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplGlfw_NewFrame();
 	ImGui::NewFrame();
+
+	// UI scaling for high-DPI displays.
+	ImGuiIO& io = ImGui::GetIO();
+	if (m_uiScale <= 0.01f) m_uiScale = 1.0f;
+	io.FontGlobalScale = m_uiScale;
+	if (m_uiScaleApplied <= 0.01f) m_uiScaleApplied = 1.0f;
+	if (m_uiScaleApplied != m_uiScale) {
+		ImGuiStyle& style = ImGui::GetStyle();
+		style.ScaleAllSizes(m_uiScale / m_uiScaleApplied);
+		m_uiScaleApplied = m_uiScale;
+	}
 }
 
 void App::endFrame() {
@@ -231,6 +254,15 @@ void App::drawMenuBar() {
 			if (ImGui::BeginMenu("View")) {
 				ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
 				ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
+				if (ImGui::BeginMenu("UI Scale")) {
+					bool s1 = (m_uiScale == 1.0f);
+					bool s15 = (m_uiScale == 1.5f);
+					bool s2 = (m_uiScale == 2.0f);
+					if (ImGui::MenuItem("1.0x", nullptr, s1)) m_uiScale = 1.0f;
+					if (ImGui::MenuItem("1.5x", nullptr, s15)) m_uiScale = 1.5f;
+					if (ImGui::MenuItem("2.0x", nullptr, s2)) m_uiScale = 2.0f;
+					ImGui::EndMenu();
+				}
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenuBar();
@@ -267,9 +299,30 @@ void App::drawControlsOverlay() {
 }
 
 void App::drawSidePanel() {
-	ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	// Default: top-right, but the window is still movable; we will clamp to stay visible.
+	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - 10.0f, vp->Pos.y + 60.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
 	ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
 	ImGui::Begin("Tools & Settings");
+
+	// Keep the window fully inside the visible work area when the main window is resized.
+	{
+		ImVec2 workMin = vp->WorkPos;
+		ImVec2 workMax = ImVec2(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
+		ImVec2 pos = ImGui::GetWindowPos();
+		ImVec2 size = ImGui::GetWindowSize();
+		float maxX = workMax.x - size.x;
+		float maxY = workMax.y - size.y;
+		ImVec2 clamped;
+		clamped.x = (pos.x < workMin.x) ? workMin.x : ((pos.x > maxX) ? maxX : pos.x);
+		clamped.y = (pos.y < workMin.y) ? workMin.y : ((pos.y > maxY) ? maxY : pos.y);
+		// If the window is larger than the viewport, pin to top-left.
+		if (maxX < workMin.x) clamped.x = workMin.x;
+		if (maxY < workMin.y) clamped.y = workMin.y;
+		if (clamped.x != pos.x || clamped.y != pos.y) {
+			ImGui::SetWindowPos(clamped, ImGuiCond_Always);
+		}
+	}
 
 	ImGui::TextUnformatted("Mesh");
 	ImGui::Separator();
@@ -371,6 +424,7 @@ void App::resetSettingsToDefaults() {
 	m_viewportBg[2] = 0.22f;
 	m_showControlsOverlay = true;
 	m_showDemoWindow = false;
+	m_uiScale = 1.0f;
 }
 
 void App::actionImportObj() {

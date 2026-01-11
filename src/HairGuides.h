@@ -13,13 +13,13 @@ struct GuideSettings {
 	bool enableMeshCollision = true;
 	bool enableCurveCollision = false;
 	bool enableGpuSolver = false;
-	float collisionThickness = 0.004f;
+	float collisionThickness = 0.0020f;
 	// Friction applied on mesh collision: 0 = slide freely, 1 = fully sticky
 	float collisionFriction = 1.0f;
 	int solverIterations = 12;
-	float gravity = 9.81f;              // m/s^2 (world units are meters)
-	float damping = 0.99f;              // Verlet velocity damping [0..1]
-	float stiffness = 1.0f;             // Distance constraint stiffness [0..1]
+	float gravity = 0.0f;               // m/s^2 (world units are meters)
+	float damping = 0.900f;             // Verlet velocity damping [0..1]
+	float stiffness = 0.10f;            // Distance constraint stiffness [0..1]
 	float dragLerp = 0.35f;             // Mouse drag smoothing [0..1] (higher = snappier)
 };
 

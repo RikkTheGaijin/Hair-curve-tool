@@ -19,8 +19,12 @@ Scene::Scene() {
 	m_guideSettings.enableMeshCollision = true;  // Re-enable collision with fixed physics
 	m_guideSettings.enableCurveCollision = false;
 	m_guideSettings.collisionFriction = 1.0f;
-	// Collision thickness: 0.0005m (0.5mm) is more reasonable for 0.01-scaled mesh
-	m_guideSettings.collisionThickness = 0.0005f;
+	// Collision thickness in meters
+	m_guideSettings.collisionThickness = 0.0020f;
+	// Default forces/constraints
+	m_guideSettings.gravity = 0.0f;
+	m_guideSettings.damping = 0.900f;
+	m_guideSettings.stiffness = 0.10f;
 	// More iterations helps stabilize when manually dragging vertices
 	m_guideSettings.solverIterations = 24;
 }
@@ -36,7 +40,10 @@ void Scene::resetSettingsToDefaults() {
 	m_guideSettings.enableMeshCollision = true;
 	m_guideSettings.enableCurveCollision = false;
 	m_guideSettings.collisionFriction = 1.0f;
-	m_guideSettings.collisionThickness = 0.0005f;
+	m_guideSettings.collisionThickness = 0.0020f;
+	m_guideSettings.gravity = 0.0f;
+	m_guideSettings.damping = 0.900f;
+	m_guideSettings.stiffness = 0.10f;
 	m_guideSettings.solverIterations = 24;
 
 	m_renderSettings = RenderSettings();

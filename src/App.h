@@ -42,6 +42,7 @@ private:
 	GLFWwindow* m_window = nullptr;
 	int m_windowWidth = 1600;
 	int m_windowHeight = 900;
+	bool m_windowMaximized = false;
 
 	bool m_shouldClose = false;
 
@@ -52,6 +53,8 @@ private:
 	// UI state
 	bool m_showDemoWindow = false;
 	bool m_showControlsOverlay = true;
+	float m_uiScale = 1.0f;
+	float m_uiScaleApplied = 1.0f;
 	std::string m_lastObjPath;
 	std::string m_lastScenePath;
 	std::string m_lastPlyPath;

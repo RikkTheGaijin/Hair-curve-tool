@@ -28,7 +28,7 @@ std::string UserSettings::settingsPath() {
 	return settingsFilePath().string();
 }
 
-bool UserSettings::load(Scene& scene, float viewportBg[3], bool& showControlsOverlay) {
+bool UserSettings::load(Scene& scene, float viewportBg[3], bool& showControlsOverlay, float& uiScale, int& windowWidth, int& windowHeight, bool& windowMaximized) {
 	std::filesystem::path path = settingsFilePath();
 	if (!std::filesystem::exists(path)) return false;
 
@@ -75,6 +75,10 @@ bool UserSettings::load(Scene& scene, float viewportBg[3], bool& showControlsOve
 	Json::Value ui = root["ui"];
 	if (ui.isObject()) {
 		showControlsOverlay = ui.get("showControlsOverlay", showControlsOverlay).asBool();
+		uiScale = ui.get("uiScale", uiScale).asFloat();
+		windowWidth = ui.get("windowWidth", windowWidth).asInt();
+		windowHeight = ui.get("windowHeight", windowHeight).asInt();
+		windowMaximized = ui.get("windowMaximized", windowMaximized).asBool();
 	}
 
 	// Viewport background
@@ -88,7 +92,7 @@ bool UserSettings::load(Scene& scene, float viewportBg[3], bool& showControlsOve
 	return true;
 }
 
-bool UserSettings::save(const Scene& scene, const float viewportBg[3], bool showControlsOverlay) {
+bool UserSettings::save(const Scene& scene, const float viewportBg[3], bool showControlsOverlay, float uiScale, int windowWidth, int windowHeight, bool windowMaximized) {
 	std::filesystem::path path = settingsFilePath();
 	std::error_code ec;
 	std::filesystem::create_directories(path.parent_path(), ec);
@@ -126,6 +130,10 @@ bool UserSettings::save(const Scene& scene, const float viewportBg[3], bool show
 	// UI
 	Json::Value ui;
 	ui["showControlsOverlay"] = showControlsOverlay;
+	ui["uiScale"] = uiScale;
+	ui["windowWidth"] = windowWidth;
+	ui["windowHeight"] = windowHeight;
+	ui["windowMaximized"] = windowMaximized;
 	root["ui"] = ui;
 
 	Json::Value bg(Json::arrayValue);
