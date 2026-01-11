@@ -23,6 +23,9 @@ public:
 	float pitch() const { return m_pitch; }
 	float distance() const { return m_distance; }
 
+	// Restore camera state (used for scene load). Angles are radians.
+	void setState(const glm::vec3& target, float distance, float yaw, float pitch);
+
 	void orbit(float dx, float dy);
 	void pan(float dx, float dy);
 	void dolly(float dy);

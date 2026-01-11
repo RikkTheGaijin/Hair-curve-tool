@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "Mesh.h"
+#include "Camera.h"
 
 #include <json/json.h>
 
@@ -20,10 +21,20 @@ static glm::vec3 jsonToVec3(const Json::Value& a) {
 	return glm::vec3(a[0].asFloat(), a[1].asFloat(), a[2].asFloat());
 }
 
-bool Serialization::saveScene(const Scene& scene, const std::string& path) {
+bool Serialization::saveScene(const Scene& scene, const Camera& camera, const std::string& path) {
 	Json::Value root;
 	root["version"] = 1;
 	root["meshPath"] = scene.meshPath();
+
+	// Camera
+	{
+		Json::Value jc;
+		jc["target"] = vec3ToJson(camera.target());
+		jc["yaw"] = camera.yaw();
+		jc["pitch"] = camera.pitch();
+		jc["distance"] = camera.distance();
+		root["camera"] = jc;
+	}
 
 	const GuideSettings& gs = scene.guideSettings();
 	Json::Value jgs;
@@ -66,8 +77,7 @@ bool Serialization::saveScene(const Scene& scene, const std::string& path) {
 	writer->write(root, &f);
 	return true;
 }
-
-bool Serialization::loadScene(Scene& scene, const std::string& path) {
+bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& path, bool* outCameraRestored) {
 	std::ifstream f(path, std::ios::binary);
 	if (!f.is_open()) return false;
 
@@ -85,7 +95,21 @@ bool Serialization::loadScene(Scene& scene, const std::string& path) {
 	if (!scene.mesh()) {
 		// Can't restore curve roots without the mesh; keep the scene empty.
 		scene.guides().clear();
+		if (outCameraRestored) *outCameraRestored = false;
 		return true;
+	}
+
+	bool cameraRestored = false;
+	if (camera) {
+		Json::Value jc = root["camera"];
+		if (jc.isObject()) {
+			glm::vec3 target = jsonToVec3(jc["target"]);
+			float yaw = jc.get("yaw", camera->yaw()).asFloat();
+			float pitch = jc.get("pitch", camera->pitch()).asFloat();
+			float dist = jc.get("distance", camera->distance()).asFloat();
+			camera->setState(target, dist, yaw, pitch);
+			cameraRestored = true;
+		}
 	}
 
 	GuideSettings& gs = scene.guideSettings();
@@ -140,5 +164,6 @@ bool Serialization::loadScene(Scene& scene, const std::string& path) {
 		}
 	}
 
+	if (outCameraRestored) *outCameraRestored = cameraRestored;
 	return true;
 }

@@ -15,6 +15,19 @@ void Camera::reset() {
 	m_pitch = glm::radians(-15.0f);
 }
 
+void Camera::setState(const glm::vec3& target, float distance, float yaw, float pitch) {
+	m_target = target;
+	m_distance = glm::max(0.01f, distance);
+	m_yaw = yaw;
+
+	float limit = glm::radians(89.0f);
+	m_pitch = glm::clamp(pitch, -limit, limit);
+
+	// Conservative defaults to keep navigation stable after load.
+	m_near = glm::max(0.001f, m_distance * 0.001f);
+	m_far = glm::max(100.0f, m_distance * 100.0f);
+}
+
 void Camera::frameBounds(const glm::vec3& bmin, const glm::vec3& bmax) {
 	glm::vec3 c = 0.5f * (bmin + bmax);
 	glm::vec3 e = 0.5f * (bmax - bmin);

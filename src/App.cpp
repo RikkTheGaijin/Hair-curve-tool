@@ -134,9 +134,17 @@ void App::run() {
 
 		// Start UI frame early so input is up-to-date before simulation.
 		beginFrame();
+		if (m_toastTimeRemaining > 0.0f) {
+			m_toastTimeRemaining -= ImGui::GetIO().DeltaTime;
+			if (m_toastTimeRemaining <= 0.0f) {
+				m_toastTimeRemaining = 0.0f;
+				m_toastText.clear();
+			}
+		}
 		drawMenuBar();
 		drawSidePanel();
 		drawControlsOverlay();
+		drawToastOverlay();
 		handleViewportInput();
 		ImGui::Render();
 
@@ -160,6 +168,27 @@ void App::run() {
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 		glfwSwapBuffers(m_window);
 	}
+}
+
+void App::showToast(const std::string& text, float seconds) {
+	m_toastText = text;
+	m_toastTimeRemaining = std::max(0.0f, seconds);
+}
+
+void App::drawToastOverlay() {
+	if (m_toastTimeRemaining <= 0.0f || m_toastText.empty()) return;
+
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	// Top-center, slightly below the menu bar.
+	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + 38.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+	ImGui::SetNextWindowBgAlpha(0.75f);
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+	if (ImGui::Begin("##ToastOverlay", nullptr, flags)) {
+		ImGui::TextUnformatted(m_toastText.c_str());
+	}
+	ImGui::End();
 }
 
 void App::shutdown() {
@@ -295,7 +324,8 @@ void App::handleViewportInput() {
 	if (io.WantCaptureMouse) return;
 
 	// Temporary gravity override while holding G
-	if (!io.WantCaptureKeyboard) {
+	// Allow this even when ImGui wants keyboard navigation; only disable while typing into a text field.
+	if (!io.WantTextInput) {
 		m_scene->setGravityOverrideHeld(ImGui::IsKeyDown(ImGuiKey_G));
 	} else {
 		m_scene->setGravityOverrideHeld(false);
@@ -313,8 +343,21 @@ void App::handleViewportInput() {
 		m_scene->handleViewportMouse(*m_camera, m_windowWidth, m_windowHeight);
 	}
 
-	// Keyboard actions (only when ImGui doesn't want the keyboard)
-	if (!io.WantCaptureKeyboard) {
+	// Keyboard actions (avoid triggering while typing into a text field)
+	if (!io.WantTextInput) {
+		// Quick save scene
+		if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
+			if (m_lastScenePath.empty()) {
+				actionSaveScene();
+				if (!m_lastScenePath.empty()) {
+					showToast(std::string("Quick Save (") + m_lastScenePath + ")");
+				}
+			} else {
+				Serialization::saveScene(*m_scene, *m_camera, m_lastScenePath);
+				showToast(std::string("Quick Save (") + m_lastScenePath + ")");
+			}
+		}
+
 		if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
 			m_scene->deleteSelectedCurves();
 		}
@@ -355,24 +398,40 @@ void App::actionSaveScene() {
 		path = p.string();
 	}
 	m_lastScenePath = path;
-	Serialization::saveScene(*m_scene, path);
+	Serialization::saveScene(*m_scene, *m_camera, path);
 }
 
 void App::actionLoadScene() {
 	std::string path;
 	if (!FileDialog::openFile(path, "Scene Files\0*.json\0All Files\0*.*\0")) return;
 	m_lastScenePath = path;
-	Serialization::loadScene(*m_scene, path);
-	// After loading, select the first curve (if any) so vertices are visible and physics only affects a small subset by default.
-	if (m_scene->guides().curveCount() > 0) {
-		m_scene->guides().selectCurve(0, false);
+	bool cameraRestored = false;
+	Serialization::loadScene(*m_scene, m_camera.get(), path, &cameraRestored);
+	// User preference: nothing selected after loading.
+	m_scene->guides().deselectAll();
+	// Fallback behavior for older scenes without saved camera state.
+	if (!cameraRestored && m_scene->mesh()) {
+		m_camera->frameBounds(m_scene->meshBoundsMin(), m_scene->meshBoundsMax());
 	}
-	m_camera->frameBounds(m_scene->meshBoundsMin(), m_scene->meshBoundsMax());
 }
 
 void App::actionExportCurvesPly() {
 	std::string path;
 	if (!FileDialog::saveFile(path, "PLY Files\0*.ply\0All Files\0*.*\0")) return;
+	// Ensure the file has a .ply extension (Windows file dialog can return paths without extension).
+	{
+		std::filesystem::path p(path);
+		std::string ext = p.extension().string();
+		std::string extLower = ext;
+		std::transform(extLower.begin(), extLower.end(), extLower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+		if (extLower.empty()) {
+			p += ".ply";
+		} else if (extLower != ".ply") {
+			p.replace_extension(".ply");
+		}
+		path = p.string();
+	}
 	m_lastPlyPath = path;
 	ExportPly::exportCurvesAsPointCloud(*m_scene, path);
+	showToast(std::string("Exported PLY (") + path + ")");
 }

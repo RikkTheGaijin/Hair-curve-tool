@@ -29,8 +29,10 @@ private:
 	void drawMenuBar();
 	void drawSidePanel();
 	void drawControlsOverlay();
+	void drawToastOverlay();
 	void handleViewportInput();
 	void resetSettingsToDefaults();
+	void showToast(const std::string& text, float seconds = 2.0f);
 
 	void actionImportObj();
 	void actionSaveScene();
@@ -55,4 +57,8 @@ private:
 	std::string m_lastPlyPath;
 
 	float m_viewportBg[3] = {0.22f, 0.22f, 0.22f};
+
+	// Transient UI message
+	std::string m_toastText;
+	float m_toastTimeRemaining = 0.0f;
 };
