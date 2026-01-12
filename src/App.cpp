@@ -7,8 +7,11 @@
 #include "FileDialog.h"
 #include "Serialization.h"
 #include "ExportPly.h"
+#include "ImportPly.h"
 #include "GpuSolver.h"
 #include "UserSettings.h"
+
+#include "Raycast.h"
 
 #include "HairToolVersion.h"
 
@@ -246,6 +249,7 @@ void App::drawMenuBar() {
 			if (ImGui::MenuItem("Import OBJ...")) actionImportObj();
 			if (ImGui::MenuItem("Save Scene...")) actionSaveScene();
 			if (ImGui::MenuItem("Load Scene...")) actionLoadScene();
+			if (ImGui::MenuItem("Import Curves (PLY)...")) actionImportCurvesPly();
 			if (ImGui::MenuItem("Export Curves (PLY)...")) actionExportCurvesPly();
 			ImGui::Separator();
 			if (ImGui::MenuItem("Quit")) m_shouldClose = true;
@@ -508,6 +512,108 @@ void App::actionLoadScene() {
 	// Fallback behavior for older scenes without saved camera state.
 	if (!cameraRestored && m_scene->mesh()) {
 		m_camera->frameBounds(m_scene->meshBoundsMin(), m_scene->meshBoundsMax());
+	}
+}
+
+void App::actionImportCurvesPly() {
+	std::string path;
+	if (!FileDialog::openFile(path, "PLY Files\0*.ply\0All Files\0*.*\0")) return;
+
+	// Ensure the file has a .ply extension (Windows file dialog can return paths without extension).
+	{
+		std::filesystem::path p(path);
+		std::string ext = p.extension().string();
+		std::string extLower = ext;
+		std::transform(extLower.begin(), extLower.end(), extLower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+		if (extLower.empty()) {
+			p += ".ply";
+		} else if (extLower != ".ply") {
+			p.replace_extension(".ply");
+		}
+		path = p.string();
+	}
+
+	std::vector<ImportPly::ImportedCurve> curves;
+	std::string err;
+	if (!ImportPly::loadCurves(path, curves, &err)) {
+		showToast(std::string("Import Curves failed: ") + (err.empty() ? "invalid PLY" : err));
+		return;
+	}
+
+	if (!m_scene->mesh()) {
+		showToast("Import Curves failed: no mesh loaded");
+		return;
+	}
+
+	// Replace current curves with imported ones.
+	m_scene->clearCurves();
+
+	const Mesh& mesh = *m_scene->mesh();
+	const GuideSettings& gs = m_scene->guideSettings();
+
+	int droppedNoBinding = 0;
+	int droppedInvalid = 0;
+	int imported = 0;
+
+	// Tolerance for snapping roots to a potentially different mesh.
+	// In HairTool, a valid exported root should be essentially on the surface; keep this tight
+	// so importing curves against a significantly different mesh drops unbindable strands.
+	const float maxBindDist = std::max(0.005f, gs.collisionThickness * 2.0f);
+
+	for (const auto& ic : curves) {
+		if (ic.points.size() < 2) {
+			droppedInvalid++;
+			continue;
+		}
+		int rootIdx = (ic.anchorIndex >= 0 && (size_t)ic.anchorIndex < ic.points.size()) ? ic.anchorIndex : 0;
+		std::vector<glm::vec3> pts = ic.points;
+		if (rootIdx != 0) {
+			// Ensure the root is point[0] (HairTool treats index 0 as the pinned root).
+			std::rotate(pts.begin(), pts.begin() + rootIdx, pts.end());
+			rootIdx = 0;
+		}
+		glm::vec3 rootPos = pts[(size_t)rootIdx];
+
+		RayHit hit;
+		if (!Raycast::nearestOnMesh(mesh, rootPos, hit, maxBindDist) || !hit.hit || hit.triIndex < 0) {
+			droppedNoBinding++;
+			continue;
+		}
+
+		// Append via addCurveOnMesh (to preserve invariants), then overwrite with imported points.
+		m_scene->guides().addCurveOnMesh(mesh, hit.triIndex, hit.bary, hit.position, hit.normal, gs);
+		HairCurve& dst = m_scene->guides().curve(m_scene->guides().curveCount() - 1);
+		dst.root.triIndex = hit.triIndex;
+		dst.root.bary = hit.bary;
+		dst.points = pts;
+		dst.prevPoints = pts;
+		// Snap the root to the bound mesh point.
+		if (!dst.points.empty()) {
+			dst.points[0] = hit.position;
+			dst.prevPoints[0] = hit.position;
+		}
+		if (dst.points.size() >= 2) {
+			float sum = 0.0f;
+			for (size_t si = 0; si + 1 < dst.points.size(); si++) sum += glm::length(dst.points[si + 1] - dst.points[si]);
+			dst.segmentRestLen = sum / (float)(dst.points.size() - 1);
+		}
+		imported++;
+	}
+
+	m_scene->guides().deselectAll();
+
+	if (droppedNoBinding > 0) {
+		showToast(
+			std::to_string(droppedNoBinding) + " curves cannot find a binding surface (dropped). Imported " + std::to_string(imported),
+			5.0f
+		);
+	} else if (droppedInvalid > 0) {
+		showToast(
+			"Imported Curves (PLY): " + std::to_string(imported) + " (dropped " + std::to_string(droppedInvalid) + " invalid)",
+			5.0f
+		);
+	} else {
+		showToast("Imported Curves (PLY): " + std::to_string(imported) + " (dropped 0)", 5.0f);
 	}
 }
 

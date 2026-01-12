@@ -50,6 +50,7 @@ public:
 	void handleViewportMouse(const MayaCameraController& camera, int viewportW, int viewportH);
 	void deleteSelectedCurves();
 	void resetSettingsToDefaults();
+	void clearCurves();
 
 	void setGravityOverrideHeld(bool held) { m_gravityOverrideHeld = held; }
 	bool gravityOverrideHeld() const { return m_gravityOverrideHeld; }

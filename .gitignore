@@ -4,7 +4,6 @@ build/
 *.sln
 *.vcxproj*
 *.pdb
-*.obj
 *.ilk
 *.ipch
 *.db

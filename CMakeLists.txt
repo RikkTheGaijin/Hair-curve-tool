@@ -36,6 +36,8 @@ add_executable(HairTool
   src/App.cpp
   src/App.h
   src/Log.h
+  src/ImportPly.cpp
+  src/ImportPly.h
   src/UserSettings.cpp
   src/UserSettings.h
   src/Camera.cpp

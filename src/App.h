@@ -38,6 +38,7 @@ private:
 	void actionImportObj();
 	void actionSaveScene();
 	void actionLoadScene();
+	void actionImportCurvesPly();
 	void actionExportCurvesPly();
 
 	GLFWwindow* m_window = nullptr;

@@ -117,6 +117,16 @@ bool Scene::loadMeshFromObj(const std::string& path) {
 	return true;
 }
 
+void Scene::clearCurves() {
+	m_guides.clear();
+	clearMirrorPairs();
+	m_hoverCurve = -1;
+	m_hoverHighlightActive = false;
+	m_dragCurve = -1;
+	m_dragVert = -1;
+	m_dragging = false;
+}
+
 void Scene::tick() {
 	// placeholder for per-frame updates
 }
