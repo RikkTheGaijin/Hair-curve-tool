@@ -375,8 +375,56 @@ void App::drawSidePanel() {
 	ImGui::Separator();
 
 	GuideSettings& gs = m_scene->guideSettings();
+
+	// If a curve (or curves) are selected, drive the Length/Steps UI from the selection.
+	// If multiple curves have different values, indicate it as "mixed".
+	{
+		std::vector<int> sel = m_scene->guides().selectedCurves();
+		uint64_t sig = 1469598103934665603ull; // FNV-1a 64-bit basis
+		for (int idx : sel) {
+			sig ^= (uint64_t)(idx + 1);
+			sig *= 1099511628211ull;
+		}
+
+		m_selectedLengthMixed = false;
+		m_selectedStepsMixed = false;
+
+		if (!sel.empty()) {
+			const HairCurve& c0 = m_scene->guides().curve((size_t)sel[0]);
+			float baseLen = (c0.points.size() >= 2) ? (c0.segmentRestLen * (float)(c0.points.size() - 1)) : gs.defaultLength;
+			int baseSteps = (int)c0.points.size();
+
+			for (size_t i = 1; i < sel.size(); i++) {
+				const HairCurve& ci = m_scene->guides().curve((size_t)sel[i]);
+				float li = (ci.points.size() >= 2) ? (ci.segmentRestLen * (float)(ci.points.size() - 1)) : baseLen;
+				int si = (int)ci.points.size();
+				if (glm::abs(li - baseLen) > 1e-6f) m_selectedLengthMixed = true;
+				if (si != baseSteps) m_selectedStepsMixed = true;
+				if (m_selectedLengthMixed && m_selectedStepsMixed) break;
+			}
+
+			// Only snap the sliders to the selection when the selection changes,
+			// so we don't fight the user's ongoing slider interaction.
+			if (sig != m_selectedCurvesSignature) {
+				m_selectedCurvesSignature = sig;
+				gs.defaultLength = baseLen;
+				gs.defaultSteps = baseSteps;
+			}
+		} else {
+			m_selectedCurvesSignature = sig;
+		}
+	}
+
 	bool lengthChanged = ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
+	if (m_selectedLengthMixed) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("(mixed)");
+	}
 	bool stepsChanged = ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
+	if (m_selectedStepsMixed) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("(mixed)");
+	}
 	ImGui::Checkbox("Mirror mode", &gs.mirrorMode);
 	if (lengthChanged || stepsChanged) {
 		m_scene->guides().applyLengthStepsToSelected(gs.defaultLength, gs.defaultSteps);

@@ -70,4 +70,9 @@ private:
 	// UI counters (throttled)
 	int m_cachedGuideCount = 0;
 	float m_guideCounterAccum = 0.0f;
+
+	// Selection-driven guide settings UI
+	uint64_t m_selectedCurvesSignature = 0;
+	bool m_selectedLengthMixed = false;
+	bool m_selectedStepsMixed = false;
 };
