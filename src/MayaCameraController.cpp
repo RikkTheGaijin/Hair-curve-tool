@@ -19,7 +19,9 @@ void MayaCameraController::handleMouse(bool alt, bool lmb, bool mmb, bool rmb, f
 		return;
 	}
 	if (rmb && !lmb) {
-		dolly(dy);
+		// Maya-like: horizontal drag matches vertical drag direction for dolly
+		float dollyDelta = dy - dx;
+		dolly(dollyDelta);
 		return;
 	}
 }
