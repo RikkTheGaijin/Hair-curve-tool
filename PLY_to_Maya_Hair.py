@@ -150,7 +150,7 @@ def _build_group_name(base_name, source_path):
 
 def import_spiderweb_ply(batch_size=5000,
                          degree=1,
-                         group_name='SpiderWeb_grp'):
+                         group_name='Curves_grp'):
     """Import a SpiderWeb PLY file and rebuild strands as curves."""
 
     file_filter = 'PLY Files (*.ply);;All Files (*.*)'
