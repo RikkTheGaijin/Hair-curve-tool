@@ -260,7 +260,6 @@ void App::drawMenuBar() {
 		}
 
 		if (ImGui::BeginMenu("View")) {
-			ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
 			ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
 			ImGui::MenuItem("Layers Panel", nullptr, &m_showLayersPanel);
 			if (ImGui::BeginMenu("UI Scale")) {
@@ -629,7 +628,6 @@ void App::resetSettingsToDefaults() {
 	m_viewportBg[1] = 0.22f;
 	m_viewportBg[2] = 0.22f;
 	m_showControlsOverlay = true;
-	m_showDemoWindow = false;
 	m_uiScale = 1.0f;
 }
 

@@ -55,7 +55,6 @@ private:
 	std::unique_ptr<MayaCameraController> m_camera;
 
 	// UI state
-	bool m_showDemoWindow = false;
 	bool m_showControlsOverlay = true;
 	bool m_showLayersPanel = true;
 	float m_uiScale = 1.0f;
