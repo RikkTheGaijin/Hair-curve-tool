@@ -428,6 +428,16 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 		RayHit hit;
 		if (!Raycast::raycastMesh(*m_mesh, ro, rd, hit)) return;
 
+		// Prevent duplicate roots (debounce double-clicks / overlapping curves)
+		const float dupRootTol = std::max(0.0005f, m_guideSettings.collisionThickness * 0.5f);
+		for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+			const HairCurve& c = m_guides.curve(ci);
+			if (c.points.empty()) continue;
+			if (glm::length(c.points[0] - hit.position) <= dupRootTol) {
+				return;
+			}
+		}
+
 		const LayerInfo& layer = m_layers[(size_t)m_activeLayer];
 		int newIdx = m_guides.addCurveOnMesh(*m_mesh, hit.triIndex, hit.bary, hit.position, hit.normal, m_guideSettings, m_activeLayer, layer.color, layer.visible);
 		if (newIdx >= 0) {
@@ -437,6 +447,14 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 				RayHit mh;
 				glm::vec3 mp = mirrorX(hit.position);
 				if (Raycast::nearestOnMesh(*m_mesh, mp, mh)) {
+					// Prevent duplicate roots for mirror curve too
+					for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+						const HairCurve& c = m_guides.curve(ci);
+						if (c.points.empty()) continue;
+						if (glm::length(c.points[0] - mh.position) <= dupRootTol) {
+							return;
+						}
+					}
 					int mirrorIdx = m_guides.addCurveOnMesh(*m_mesh, mh.triIndex, mh.bary, mh.position, mh.normal, m_guideSettings, m_activeLayer, layer.color, layer.visible);
 					if (mirrorIdx >= 0) {
 						// Mirror the initial shape 1:1 across the plane X=0.

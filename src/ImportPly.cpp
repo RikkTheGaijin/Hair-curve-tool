@@ -20,8 +20,39 @@ namespace {
 	}
 }
 
-bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& outCurves, std::string* outError) {
+static bool parseLayerComment(const std::string& line, ImportPly::ImportedLayer& outLayer) {
+	const std::string prefix = "comment layer ";
+	if (line.rfind(prefix, 0) != 0) return false;
+	std::string rest = line.substr(prefix.size());
+	std::istringstream iss(rest);
+	int id = 0;
+	if (!(iss >> id)) return false;
+
+	std::string name;
+	iss >> std::ws;
+	char c = (char)iss.peek();
+	if (c == '"') {
+		iss.get();
+		std::getline(iss, name, '"');
+	} else {
+		iss >> name;
+	}
+
+	float r = 0.90f, g = 0.75f, b = 0.22f;
+	int vis = 1;
+	iss >> r >> g >> b >> vis;
+
+	outLayer.id = id;
+	outLayer.name = name.empty() ? (std::string("Layer ") + std::to_string(id)) : name;
+	outLayer.color = glm::vec3(r, g, b);
+	outLayer.visible = (vis != 0);
+	return true;
+}
+
+bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& outCurves, std::vector<ImportedLayer>* outLayers, bool* outHasLayerInfo, std::string* outError) {
 	outCurves.clear();
+	if (outLayers) outLayers->clear();
+	if (outHasLayerInfo) *outHasLayerInfo = false;
 	if (outError) outError->clear();
 
 	std::ifstream f(path, std::ios::binary);
@@ -37,6 +68,7 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 	int vertexCount = 0;
 	std::vector<std::string> props;
 
+	std::map<int, ImportedLayer> layersById;
 	while (std::getline(f, line)) {
 		line = trim(line);
 		if (line.empty()) continue;
@@ -53,6 +85,14 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 		if (startsWith(line, "format ")) {
 			// format ascii 1.0
 			ascii = (line.find("ascii") != std::string::npos);
+			continue;
+		}
+
+		if (startsWith(line, "comment layer ")) {
+			ImportedLayer layer;
+			if (parseLayerComment(line, layer)) {
+				layersById[layer.id] = layer;
+			}
 			continue;
 		}
 
@@ -106,6 +146,8 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 	}
 	const int iAnchor = findProp("anchor");
 	const int iCurveId = findProp("curve_id");
+	const int iLayerId = findProp("layer_id");
+	bool sawNonZeroLayerId = false;
 
 	// Grouping: prefer curve_id if present. Otherwise, split by anchor==1 if present; else treat as one curve.
 	std::map<int, ImportedCurve> curvesById;
@@ -138,11 +180,14 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 		glm::vec3 p(getFloat(ix), getFloat(iy), getFloat(iz));
 		int anchor = (iAnchor >= 0) ? getInt(iAnchor) : 0;
 		int cid = (iCurveId >= 0) ? getInt(iCurveId) : 0;
+		int lid = (iLayerId >= 0) ? getInt(iLayerId) : 0;
+		if (lid != 0) sawNonZeroLayerId = true;
 
 		if (iCurveId >= 0) {
 			ImportedCurve& c = curvesById[cid];
 			int localIndex = (int)c.points.size();
 			c.points.push_back(p);
+			if (c.layerId == 0 && lid != 0) c.layerId = lid;
 			if (anchor == 1 && c.anchorIndex < 0) c.anchorIndex = localIndex;
 		} else if (useAnchorSplitting) {
 			if (anchor == 1 && !current.points.empty()) {
@@ -151,10 +196,12 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 			}
 			int localIndex = (int)current.points.size();
 			current.points.push_back(p);
+			if (current.layerId == 0 && lid != 0) current.layerId = lid;
 			if (anchor == 1 && current.anchorIndex < 0) current.anchorIndex = localIndex;
 		} else {
 			int localIndex = (int)current.points.size();
 			current.points.push_back(p);
+			if (current.layerId == 0 && lid != 0) current.layerId = lid;
 			if (anchor == 1 && current.anchorIndex < 0) current.anchorIndex = localIndex;
 		}
 	}
@@ -165,6 +212,16 @@ bool ImportPly::loadCurves(const std::string& path, std::vector<ImportedCurve>& 
 		}
 	} else {
 		if (current.points.size() >= 2) outCurves.push_back(current);
+	}
+
+	if (outHasLayerInfo) {
+		*outHasLayerInfo = (!layersById.empty()) || sawNonZeroLayerId;
+	}
+
+	if (outLayers && !layersById.empty()) {
+		for (const auto& kv : layersById) {
+			outLayers->push_back(kv.second);
+		}
 	}
 
 	if (outCurves.empty()) {

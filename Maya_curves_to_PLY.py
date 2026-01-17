@@ -2,7 +2,7 @@
 """HairTool curve exporter for Maya (Python 2/3)
 
 Select one or more NURBS curves, run this script, and it will export an ASCII
-PLY in the exact format HairTool expects:
+PLY in the exact format HairTool expects (with layers):
 
 ply
 format ascii 1.0
@@ -11,6 +11,7 @@ property float x
 property float y
 property float z
 property uchar anchor
+property int layer_id
 property int curve_id
 end_header
 ...
@@ -18,6 +19,7 @@ end_header
 Notes:
 - HairTool works in meters; Maya works in centimeters. We export cm -> m (divide by 100).
 - Each selected curve becomes one HairTool guide (curve_id).
+- If curves are organized in layer sub-groups, layer_id is exported too.
 """
 
 from __future__ import print_function
@@ -77,6 +79,67 @@ def _iter_selected_nurbs_curve_shapes():
         yield sl.getDagPath(0)
 
 
+def _collect_layer_groups_from_selection():
+    """Return list of (layer_name, [curve_shapes]) if selection contains layer sub-groups."""
+    sel = cmds.ls(sl=True, long=True) or []
+    layer_groups = []
+    seen_group = set()
+
+    def _curves_under(node):
+        shapes = cmds.listRelatives(node, ad=True, type='nurbsCurve', fullPath=True) or []
+        return shapes
+
+    for node in sel:
+        if cmds.nodeType(node) == 'nurbsCurve':
+            continue
+        if node in seen_group:
+            continue
+        seen_group.add(node)
+        child_groups = cmds.listRelatives(node, children=True, type='transform', fullPath=True) or []
+        for cg in child_groups:
+            # Treat only group nodes (no direct nurbsCurve shape) as layer containers.
+            direct_shapes = cmds.listRelatives(cg, shapes=True, type='nurbsCurve', fullPath=True) or []
+            if direct_shapes:
+                continue
+            curves = _curves_under(cg)
+            if curves:
+                layer_groups.append((cg, curves))
+
+    # Deduplicate layer groups by name
+    uniq = []
+    seen = set()
+    for name, curves in layer_groups:
+        if name in seen:
+            continue
+        seen.add(name)
+        uniq.append((name, curves))
+    return uniq
+
+
+def _layer_color(idx):
+    # Simple HSV->RGB with golden-ratio hues for distinct colors
+    h = (idx * 0.61803398875) % 1.0
+    s = 0.65
+    v = 0.95
+    i = int(h * 6.0)
+    f = h * 6.0 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - s * (1.0 - f))
+    i = i % 6
+    if i == 0:
+        return (v, t, p)
+    if i == 1:
+        return (q, v, p)
+    if i == 2:
+        return (p, v, t)
+    if i == 3:
+        return (p, q, v)
+    if i == 4:
+        return (t, p, v)
+    return (v, p, q)
+
+
 def _curve_world_points(curve_dag, mode='cvs', samples_per_span=4, min_samples=2):
     """Return list of (x,y,z) world positions for exporting.
 
@@ -125,18 +188,41 @@ def export_selected_curves_to_ply(mode='cvs', samples_per_span=4, min_samples=2)
 
     start_time = time.time()
 
-    curves = list(_iter_selected_nurbs_curve_shapes())
+    layer_groups = _collect_layer_groups_from_selection()
+    has_layer_info = bool(layer_groups)
+    if layer_groups:
+        curves = []
+        layer_map = []
+        for idx, (layer_node, curve_shapes) in enumerate(layer_groups):
+            layer_name = cmds.ls(layer_node, shortNames=True) or [layer_node]
+            layer_name = layer_name[0]
+            layer_map.append({'id': idx, 'name': layer_name})
+            for s in curve_shapes:
+                sl = om.MSelectionList()
+                sl.add(s)
+                curves.append((idx, sl.getDagPath(0)))
+    else:
+        curves = [dag for dag in _iter_selected_nurbs_curve_shapes()]
+        layer_map = []
+
     if not curves:
         cmds.warning('Select at least one NURBS curve (shape or transform).')
         return
 
     # Sample all curves first to know vertex count
     sampled = []
-    for dag in curves:
-        pts_cm = _curve_world_points(dag, mode=mode, samples_per_span=samples_per_span, min_samples=min_samples)
-        if len(pts_cm) < 2:
-            continue
-        sampled.append(pts_cm)
+    if has_layer_info:
+        for layer_id, dag in curves:
+            pts_cm = _curve_world_points(dag, mode=mode, samples_per_span=samples_per_span, min_samples=min_samples)
+            if len(pts_cm) < 2:
+                continue
+            sampled.append((layer_id, pts_cm))
+    else:
+        for dag in curves:
+            pts_cm = _curve_world_points(dag, mode=mode, samples_per_span=samples_per_span, min_samples=min_samples)
+            if len(pts_cm) < 2:
+                continue
+            sampled.append(pts_cm)
 
     if not sampled:
         cmds.warning('No valid curves found to export.')
@@ -145,29 +231,48 @@ def export_selected_curves_to_ply(mode='cvs', samples_per_span=4, min_samples=2)
     # Maya is centimeters; HairTool is meters
     scale = 0.01
 
-    vertex_count = sum(len(pts) for pts in sampled)
+    vertex_count = sum(len(pts) for pts in sampled) if not has_layer_info else sum(len(pts) for _, pts in sampled)
 
     # Write as ASCII bytes to avoid Py2/Py3 text/bytes differences.
     with open(path, 'wb') as f:
         f.write(_to_ascii_bytes('ply\n'))
         f.write(_to_ascii_bytes('format ascii 1.0\n'))
+        # Layer metadata for round-trip
+        if has_layer_info:
+            for lm in layer_map:
+                col = _layer_color(lm['id'])
+                f.write(_to_ascii_bytes('comment layer {0} "{1}" {2} {3} {4} 1\n'.format(
+                    lm['id'], lm['name'], col[0], col[1], col[2]
+                )))
         f.write(_to_ascii_bytes('element vertex {0}\n'.format(vertex_count)))
         f.write(_to_ascii_bytes('property float x\n'))
         f.write(_to_ascii_bytes('property float y\n'))
         f.write(_to_ascii_bytes('property float z\n'))
         f.write(_to_ascii_bytes('property uchar anchor\n'))
+        if has_layer_info:
+            f.write(_to_ascii_bytes('property int layer_id\n'))
         f.write(_to_ascii_bytes('property int curve_id\n'))
         f.write(_to_ascii_bytes('end_header\n'))
 
         cid = 0
-        for pts_cm in sampled:
-            for i, p in enumerate(pts_cm):
-                x = float(p[0]) * scale
-                y = float(p[1]) * scale
-                z = float(p[2]) * scale
-                anchor = 1 if i == 0 else 0
-                f.write(_to_ascii_bytes('{0} {1} {2} {3} {4}\n'.format(x, y, z, anchor, cid)))
-            cid += 1
+        if has_layer_info:
+            for layer_id, pts_cm in sampled:
+                for i, p in enumerate(pts_cm):
+                    x = float(p[0]) * scale
+                    y = float(p[1]) * scale
+                    z = float(p[2]) * scale
+                    anchor = 1 if i == 0 else 0
+                    f.write(_to_ascii_bytes('{0} {1} {2} {3} {4} {5}\n'.format(x, y, z, anchor, layer_id, cid)))
+                cid += 1
+        else:
+            for pts_cm in sampled:
+                for i, p in enumerate(pts_cm):
+                    x = float(p[0]) * scale
+                    y = float(p[1]) * scale
+                    z = float(p[2]) * scale
+                    anchor = 1 if i == 0 else 0
+                    f.write(_to_ascii_bytes('{0} {1} {2} {3} {4}\n'.format(x, y, z, anchor, cid)))
+                cid += 1
 
     print('✅ Exported {0} curves ({1} vertices) to: {2} ({3:.2f}s)'.format(len(sampled), vertex_count, path, time.time() - start_time))
 

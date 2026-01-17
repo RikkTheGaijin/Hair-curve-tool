@@ -26,6 +26,7 @@ def _parse_ply_header(handle):
         'vertex_count': 0,
         'vertex_props': [],
         'points_per_strand': None,
+        'layers': [],
         'header_end': 0
     }
     in_vertex_element = False
@@ -45,6 +46,30 @@ def _parse_ply_header(handle):
         elif stripped.startswith('comment') and 'points_per_strand' in stripped:
             try:
                 meta['points_per_strand'] = int(stripped.split()[-1])
+            except Exception:
+                pass
+        elif stripped.startswith('comment layer '):
+            try:
+                rest = stripped[len('comment layer '):].strip()
+                parts = rest.split(None, 1)
+                lid = int(parts[0])
+                name = ''
+                color = None
+                visible = True
+                if len(parts) > 1:
+                    tail = parts[1].strip()
+                    if tail.startswith('"'):
+                        end = tail.find('"', 1)
+                        if end > 0:
+                            name = tail[1:end]
+                            tail = tail[end+1:].strip()
+                    if tail:
+                        nums = tail.split()
+                        if len(nums) >= 3:
+                            color = (float(nums[0]), float(nums[1]), float(nums[2]))
+                        if len(nums) >= 4:
+                            visible = (int(nums[3]) != 0)
+                meta['layers'].append({'id': lid, 'name': name, 'color': color, 'visible': visible})
             except Exception:
                 pass
         elif stripped.startswith('element vertex'):
@@ -69,6 +94,7 @@ def _read_ascii_vertices(handle, meta):
 
     anchor_idx = props.index('anchor') if 'anchor' in props else None
     curve_id_idx = props.index('curve_id') if 'curve_id' in props else None
+    layer_id_idx = props.index('layer_id') if 'layer_id' in props else None
     vertices = []
 
     # The web tool imports OBJs with a 0.01 scale factor (cm -> m).
@@ -84,7 +110,8 @@ def _read_ascii_vertices(handle, meta):
         z = float(parts[iz]) * scale_factor
         anchor = int(parts[anchor_idx]) if anchor_idx is not None else 0
         curve_id = int(parts[curve_id_idx]) if curve_id_idx is not None else 0
-        vertices.append((x, y, z, anchor, curve_id))
+        layer_id = int(parts[layer_id_idx]) if layer_id_idx is not None else 0
+        vertices.append((x, y, z, anchor, curve_id, layer_id))
 
     return vertices
 
@@ -167,15 +194,20 @@ def import_spiderweb_ply(batch_size=5000,
 
     # New format: variable-length strands via per-vertex curve_id.
     has_curve_id = 'curve_id' in (meta.get('vertex_props') or [])
+    has_layer_id = 'layer_id' in (meta.get('vertex_props') or [])
+    layer_names = {l.get('id', 0): (l.get('name') or ('Layer {0}'.format(l.get('id', 0)))) for l in (meta.get('layers') or [])}
     if has_curve_id:
         # Preserve appearance order within each curve_id.
         strands = {}
+        strand_layers = {}
         order = []
         for v in vertices:
             cid = v[4]
+            lid = v[5] if has_layer_id else 0
             if cid not in strands:
                 strands[cid] = []
                 order.append(cid)
+                strand_layers[cid] = lid
             strands[cid].append(v)
         strand_ids = sorted(order)
         print('→ {0} strands detected (variable points per strand)'.format(len(strand_ids)))
@@ -204,14 +236,26 @@ def import_spiderweb_ply(batch_size=5000,
 
     try:
         created = 0
+        layer_groups = {}
+
+        def _layer_group(layer_id):
+            if layer_id not in layer_groups:
+                name = layer_names.get(layer_id, 'Layer {0}'.format(layer_id))
+                lg = cmds.group(em=True, n=name, parent=group)
+                layer_groups[layer_id] = lg
+            return layer_groups[layer_id]
+
         if has_curve_id:
             total_strands = len(strand_ids)
             for cid in strand_ids:
                 chunk = strands.get(cid) or []
                 if len(chunk) < 2:
                     continue
+                lid = strand_layers.get(cid, 0)
                 positions = [(p[0], p[1], p[2]) for p in chunk]
-                _create_curve(positions, degree, group_node)
+                parent = _layer_group(lid)
+                parent_dag = om.MSelectionList().add(parent).getDagPath(0).node()
+                _create_curve(positions, degree, parent_dag)
                 created += 1
                 if created % batch_size == 0:
                     print('  Built {0}/{1} strands...'.format(created, total_strands))
@@ -221,8 +265,11 @@ def import_spiderweb_ply(batch_size=5000,
                 chunk = vertices[start:start + pts_per_strand]
                 if len(chunk) < 2:
                     continue
+                lid = chunk[0][5] if has_layer_id else 0
                 positions = [(p[0], p[1], p[2]) for p in chunk]
-                _create_curve(positions, degree, group_node)
+                parent = _layer_group(lid)
+                parent_dag = om.MSelectionList().add(parent).getDagPath(0).node()
+                _create_curve(positions, degree, parent_dag)
                 created += 1
                 if created % batch_size == 0:
                     print('  Built {0}/{1} strands...'.format(created, strand_count))

@@ -27,7 +27,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <unordered_set>
+#include <unordered_map>
 
 App::~App() = default;
 
@@ -501,6 +501,16 @@ void App::drawLayersPanel() {
 		glm::vec3 col = m_scene->generateDistinctLayerColor();
 		std::string name = "Layer " + std::to_string(m_scene->layerCount());
 		int id = m_scene->addLayer(name, col, true);
+		std::vector<int> sel = m_scene->guides().selectedCurves();
+		if (sel.size() >= 2) {
+			for (int ci : sel) {
+				if (ci < 0 || (size_t)ci >= m_scene->guides().curveCount()) continue;
+				HairCurve& c = m_scene->guides().curve((size_t)ci);
+				c.layerId = id;
+				c.color = col;
+				c.visible = true;
+			}
+		}
 		m_scene->setActiveLayer(id);
 	}
 	ImGui::SameLine();
@@ -556,8 +566,7 @@ void App::drawLayersPanel() {
 				}
 				if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
 					m_layerRenameId = (int)i;
-					std::strncpy(m_layerRenameBuffer.data(), layer.name.c_str(), m_layerRenameBuffer.size() - 1);
-					m_layerRenameBuffer[m_layerRenameBuffer.size() - 1] = '\0';
+					strncpy_s(m_layerRenameBuffer.data(), m_layerRenameBuffer.size(), layer.name.c_str(), _TRUNCATE);
 				}
 			}
 			ImGui::PopID();
@@ -692,8 +701,10 @@ void App::actionImportCurvesPly() {
 	}
 
 	std::vector<ImportPly::ImportedCurve> curves;
+	std::vector<ImportPly::ImportedLayer> importedLayers;
+	bool hasLayerInfo = false;
 	std::string err;
-	if (!ImportPly::loadCurves(path, curves, &err)) {
+	if (!ImportPly::loadCurves(path, curves, &importedLayers, &hasLayerInfo, &err)) {
 		showToast(std::string("Import Curves failed: ") + (err.empty() ? "invalid PLY" : err));
 		return;
 	}
@@ -705,16 +716,65 @@ void App::actionImportCurvesPly() {
 
 	const Mesh& mesh = *m_scene->mesh();
 	const GuideSettings& gs = m_scene->guideSettings();
-	const int activeLayer = m_scene->activeLayer();
-	const LayerInfo& layer = m_scene->layer((size_t)activeLayer);
 	const float dupRootTol = std::max(0.0005f, gs.collisionThickness * 0.5f);
-	std::vector<int> existingLayerCurves;
+
+	const int activeLayer = m_scene->activeLayer();
+	std::unordered_map<int, int> importLayerIdMap;
+	if (hasLayerInfo) {
+		// Map imported layers by name when possible; otherwise create new layers without renaming existing ones.
+		std::unordered_map<std::string, int> nameToId;
+		for (size_t i = 0; i < m_scene->layerCount(); i++) {
+			nameToId[m_scene->layer(i).name] = (int)i;
+		}
+
+		if (!importedLayers.empty()) {
+			for (const auto& l : importedLayers) {
+				int targetId = -1;
+				if (!l.name.empty()) {
+					auto it = nameToId.find(l.name);
+					if (it != nameToId.end()) targetId = it->second;
+				}
+				if (targetId < 0) {
+					if (l.id >= 0 && (size_t)l.id < m_scene->layerCount() && m_scene->layer((size_t)l.id).name == l.name) {
+						targetId = l.id;
+					} else {
+						glm::vec3 col = l.color;
+						std::string name = l.name.empty() ? ("Layer " + std::to_string(m_scene->layerCount())) : l.name;
+						targetId = m_scene->addLayer(name, col, l.visible);
+						nameToId[name] = targetId;
+					}
+				}
+
+				LayerInfo& layer = m_scene->layer((size_t)targetId);
+				layer.name = l.name.empty() ? layer.name : l.name;
+				layer.color = l.color;
+				layer.visible = l.visible;
+				m_scene->setLayerColor(targetId, l.color);
+				m_scene->setLayerVisible(targetId, l.visible);
+				importLayerIdMap[l.id] = targetId;
+			}
+		} else {
+			// Only layer_id was present: ensure layers exist by id.
+			for (const auto& ic : curves) {
+				int lid = ic.layerId;
+				if (lid < 0) lid = 0;
+				while (m_scene->layerCount() <= (size_t)lid) {
+					glm::vec3 col = m_scene->generateDistinctLayerColor();
+					std::string name = "Layer " + std::to_string(m_scene->layerCount());
+					m_scene->addLayer(name, col, true);
+				}
+				importLayerIdMap[lid] = lid;
+			}
+		}
+	}
+
+	// Build existing roots across all layers for duplicate detection.
+	std::vector<int> existingCurves;
 	std::vector<glm::vec3> existingRoots;
 	for (size_t ci = 0; ci < m_scene->guides().curveCount(); ci++) {
 		const HairCurve& c = m_scene->guides().curve(ci);
-		if (c.layerId != activeLayer) continue;
 		if (c.points.empty()) continue;
-		existingLayerCurves.push_back((int)ci);
+		existingCurves.push_back((int)ci);
 		existingRoots.push_back(c.points[0]);
 	}
 	std::vector<int> removeExisting;
@@ -748,19 +808,35 @@ void App::actionImportCurvesPly() {
 			continue;
 		}
 
-		// Duplicate detection: if an existing curve in the active layer has the same root, replace it.
-		for (size_t ei = 0; ei < existingLayerCurves.size(); ei++) {
-			int existingIdx = existingLayerCurves[ei];
+		int layerId = hasLayerInfo ? ic.layerId : activeLayer;
+		if (layerId < 0) layerId = 0;
+		if (hasLayerInfo) {
+			auto it = importLayerIdMap.find(layerId);
+			if (it != importLayerIdMap.end()) {
+				layerId = it->second;
+			} else if ((size_t)layerId >= m_scene->layerCount()) {
+				while (m_scene->layerCount() <= (size_t)layerId) {
+					glm::vec3 col = m_scene->generateDistinctLayerColor();
+					std::string name = "Layer " + std::to_string(m_scene->layerCount());
+					m_scene->addLayer(name, col, true);
+				}
+			}
+		}
+
+		// Duplicate detection: if any existing curve has the same root, replace it.
+		for (size_t ei = 0; ei < existingCurves.size(); ei++) {
+			int existingIdx = existingCurves[ei];
 			if (existingIdx < 0) continue;
 			if (glm::length(existingRoots[ei] - hit.position) <= dupRootTol) {
 				removeExisting.push_back(existingIdx);
-				existingLayerCurves[ei] = -1;
+				existingCurves[ei] = -1;
 				break;
 			}
 		}
 
+		const LayerInfo& layer = m_scene->layer((size_t)layerId);
 		// Append via addCurveOnMesh (to preserve invariants), then overwrite with imported points.
-		m_scene->guides().addCurveOnMesh(mesh, hit.triIndex, hit.bary, hit.position, hit.normal, gs, activeLayer, layer.color, layer.visible);
+		m_scene->guides().addCurveOnMesh(mesh, hit.triIndex, hit.bary, hit.position, hit.normal, gs, layerId, layer.color, layer.visible);
 		HairCurve& dst = m_scene->guides().curve(m_scene->guides().curveCount() - 1);
 		dst.root.triIndex = hit.triIndex;
 		dst.root.bary = hit.bary;
