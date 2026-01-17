@@ -30,6 +30,8 @@ find_package(imgui CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
+find_package(Stb REQUIRED)
+find_package(JPEG REQUIRED)
 
 add_executable(HairTool
   src/main.cpp
@@ -112,7 +114,10 @@ target_link_libraries(HairTool PRIVATE
   glm::glm
   assimp::assimp
   JsonCpp::JsonCpp
+  JPEG::JPEG
 )
+
+target_include_directories(HairTool PRIVATE ${Stb_INCLUDE_DIR})
 
 target_compile_definitions(HairTool PRIVATE
   IMGUI_IMPL_OPENGL_LOADER_GLAD

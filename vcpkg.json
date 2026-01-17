@@ -8,6 +8,8 @@
       "name": "imgui",
       "features": ["docking-experimental", "glfw-binding", "opengl3-binding"]
     },
+    "stb",
+    "libjpeg-turbo",
     "glm",
     "assimp",
     "jsoncpp"
