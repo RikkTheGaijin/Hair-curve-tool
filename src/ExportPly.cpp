@@ -10,10 +10,15 @@ bool ExportPly::exportCurvesAsPointCloud(const Scene& scene, const std::string& 
 	// Single-file export that preserves per-curve control point counts.
 	// We emit per-vertex curve_id so importers can reconstruct variable-length strands.
 
+	std::vector<size_t> exportCurves;
 	size_t vertexCount = 0;
 	for (size_t ci = 0; ci < scene.guides().curveCount(); ci++) {
 		const HairCurve& c = scene.guides().curve(ci);
-		if (c.points.size() >= 2) vertexCount += c.points.size();
+		if (!c.visible) continue;
+		if (c.points.size() >= 2) {
+			exportCurves.push_back(ci);
+			vertexCount += c.points.size();
+		}
 	}
 	if (vertexCount == 0) return false;
 
@@ -30,13 +35,14 @@ bool ExportPly::exportCurvesAsPointCloud(const Scene& scene, const std::string& 
 	f << "property int curve_id\n";
 	f << "end_header\n";
 
-	for (size_t ci = 0; ci < scene.guides().curveCount(); ci++) {
+	for (size_t ei = 0; ei < exportCurves.size(); ei++) {
+		size_t ci = exportCurves[ei];
 		const HairCurve& c = scene.guides().curve(ci);
 		if (c.points.size() < 2) continue;
 		for (size_t i = 0; i < c.points.size(); i++) {
 			const glm::vec3& p = c.points[i];
 			const int anchor = (i == 0 && c.root.triIndex >= 0) ? 1 : 0;
-			f << p.x << " " << p.y << " " << p.z << " " << anchor << " " << (int)ci << "\n";
+			f << p.x << " " << p.y << " " << p.z << " " << anchor << " " << (int)ei << "\n";
 		}
 	}
 

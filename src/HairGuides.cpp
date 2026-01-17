@@ -15,8 +15,11 @@ void HairGuideSet::clear() {
 	m_activeCurve = -1;
 }
 
-int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3& bary, const glm::vec3& hitPos, const glm::vec3& hitNormal, const GuideSettings& settings) {
+int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3& bary, const glm::vec3& hitPos, const glm::vec3& hitNormal, const GuideSettings& settings, int layerId, const glm::vec3& color, bool visible) {
 	HairCurve c;
+	c.layerId = layerId;
+	c.color = color;
+	c.visible = visible;
 	// Validate and store binding.
 	// If the triangle index is invalid, we still allow spawning (unpinned root),
 	// but we must not use it during physics.
@@ -112,7 +115,7 @@ static float pointRayDistance(const glm::vec3& p, const glm::vec3& ro, const glm
 	return glm::length(p - q);
 }
 
-bool HairGuideSet::pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& camPos, const glm::mat4& viewProj, int& outCurve, int& outVert, bool selectedOnly) const {
+bool HairGuideSet::pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& camPos, const glm::mat4& viewProj, int& outCurve, int& outVert, bool selectedOnly, int activeLayer, bool requireVisible) const {
 	(void)camPos;
 	(void)viewProj;
 	// MVP: pick closest point to ray in world space with a fixed threshold
@@ -122,8 +125,10 @@ bool HairGuideSet::pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, co
 
 	const float threshold = 0.015f;
 	for (size_t ci = 0; ci < m_curves.size(); ci++) {
-		if (selectedOnly && !isCurveSelected(ci)) continue;
 		const HairCurve& c = m_curves[ci];
+		if (activeLayer >= 0 && c.layerId != activeLayer) continue;
+		if (requireVisible && !c.visible) continue;
+		if (selectedOnly && !isCurveSelected(ci)) continue;
 		for (size_t vi = 0; vi < c.points.size(); vi++) {
 			// Don't pick root (pinned)
 			if (vi == 0) continue;
@@ -185,7 +190,7 @@ static float raySegmentDistance(const glm::vec3& ro, const glm::vec3& rdNorm, co
 	return glm::length(ps - pr);
 }
 
-bool HairGuideSet::pickCurve(const glm::vec3& ro, const glm::vec3& rd, int& outCurve) const {
+bool HairGuideSet::pickCurve(const glm::vec3& ro, const glm::vec3& rd, int& outCurve, int activeLayer, bool requireVisible) const {
 	if (m_curves.empty()) return false;
 	glm::vec3 rdNorm = rd;
 	float rdl = glm::length(rdNorm);
@@ -199,6 +204,8 @@ bool HairGuideSet::pickCurve(const glm::vec3& ro, const glm::vec3& rd, int& outC
 	const float threshold = 0.025f;
 	for (size_t ci = 0; ci < m_curves.size(); ci++) {
 		const HairCurve& c = m_curves[ci];
+		if (activeLayer >= 0 && c.layerId != activeLayer) continue;
+		if (requireVisible && !c.visible) continue;
 		if (c.points.size() < 2) continue;
 		for (size_t i = 0; i + 1 < c.points.size(); i++) {
 			float d = raySegmentDistance(ro, rdNorm, c.points[i], c.points[i + 1]);
@@ -331,6 +338,8 @@ void HairGuideSet::buildCurveRenderPoints(const HairCurve& c, std::vector<glm::v
 }
 
 void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int lineProgram, float pointSizePx, float deselectedOpacity, int hoverCurve, bool hoverHighlightRed) const {
+		float oldLineWidth = 1.0f;
+		glGetFloatv(GL_LINE_WIDTH, &oldLineWidth);
 	glUseProgram(lineProgram);
 	glUniformMatrix4fv(glGetUniformLocation(lineProgram, "uViewProj"), 1, GL_FALSE, glm::value_ptr(viewProj));
 
@@ -350,6 +359,7 @@ void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int linePr
 
 	for (size_t ci = 0; ci < m_curves.size(); ci++) {
 		const HairCurve& c = m_curves[ci];
+		if (!c.visible) continue;
 		buildCurveRenderPoints(c, renderPts);
 
 		packed.clear();
@@ -358,7 +368,7 @@ void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int linePr
 		deselectedOpacity = glm::clamp(deselectedOpacity, 0.0f, 1.0f);
 		const bool selected = isCurveSelected(ci);
 		float a = isHover ? 1.0f : (selected ? 1.0f : deselectedOpacity);
-		glm::vec4 baseCol(0.90f, 0.75f, 0.22f, a); // Maya-ish yellow/orange
+		glm::vec4 baseCol(c.color.r, c.color.g, c.color.b, a);
 		glm::vec4 hoverCol(1.0f, 0.15f, 0.15f, a);
 		glm::vec4 col = isHover ? hoverCol : baseCol;
 
@@ -369,6 +379,11 @@ void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int linePr
 		}
 
 		glBufferData(GL_ARRAY_BUFFER, packed.size() * sizeof(float), packed.data(), GL_STREAM_DRAW);
+		if (isHover && hoverHighlightRed) {
+			glLineWidth(3.0f);
+		} else {
+			glLineWidth(oldLineWidth);
+		}
 		glDrawArrays(GL_LINE_STRIP, 0, (int)renderPts.size());
 
 		// Draw control points only for selected curves
@@ -386,6 +401,7 @@ void HairGuideSet::drawDebugLines(const glm::mat4& viewProj, unsigned int linePr
 			glDrawArrays(GL_POINTS, 0, (int)c.points.size());
 		}
 	}
+	glLineWidth(oldLineWidth);
 
 	glBindVertexArray(0);
 	glDeleteBuffers(1, &vbo);

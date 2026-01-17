@@ -9,6 +9,9 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
+#include <chrono>
+#include <random>
 
 glm::vec3 Scene::mirrorX(const glm::vec3& p) {
 	return glm::vec3(-p.x, p.y, p.z);
@@ -61,6 +64,7 @@ void Scene::pruneMirrorPairsToSelection() {
 }
 
 Scene::Scene() {
+	resetLayers();
 	// Maya-ish defaults
 	m_guideSettings.defaultLength = 0.3f;
 	m_guideSettings.defaultSteps = 12;
@@ -77,6 +81,170 @@ Scene::Scene() {
 	m_guideSettings.stiffness = 0.10f;
 	// More iterations helps stabilize when manually dragging vertices
 	m_guideSettings.solverIterations = 24;
+}
+
+void Scene::resetLayers() {
+	m_layers.clear();
+	LayerInfo base;
+	base.name = "Layer 0";
+	base.color = glm::vec3(0.90f, 0.75f, 0.22f);
+	base.visible = true;
+	m_layers.push_back(base);
+	m_activeLayer = 0;
+}
+
+void Scene::setLayers(const std::vector<LayerInfo>& layers, int activeLayer) {
+	if (layers.empty()) {
+		resetLayers();
+		return;
+	}
+	m_layers = layers;
+	if (activeLayer < 0 || activeLayer >= (int)m_layers.size()) {
+		m_activeLayer = 0;
+	} else {
+		m_activeLayer = activeLayer;
+	}
+	refreshCurveLayerProperties();
+}
+
+int Scene::addLayer(const std::string& name, const glm::vec3& color, bool visible) {
+	LayerInfo l;
+	l.name = name.empty() ? (std::string("Layer ") + std::to_string(m_layers.size())) : name;
+	l.color = color;
+	l.visible = visible;
+	m_layers.push_back(l);
+	return (int)m_layers.size() - 1;
+}
+
+bool Scene::deleteLayer(int layerId) {
+	if (layerId <= 0 || layerId >= (int)m_layers.size()) return false;
+
+	// Remove curves belonging to this layer
+	std::vector<int> toRemove;
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		if (m_guides.curve(ci).layerId == layerId) {
+			toRemove.push_back((int)ci);
+		}
+	}
+	if (!toRemove.empty()) {
+		std::sort(toRemove.begin(), toRemove.end());
+		std::reverse(toRemove.begin(), toRemove.end());
+		m_guides.removeCurves(toRemove);
+	}
+
+	m_layers.erase(m_layers.begin() + layerId);
+
+	// Adjust curve layer indices after removal
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		HairCurve& c = m_guides.curve(ci);
+		if (c.layerId > layerId) c.layerId--;
+	}
+
+	if (m_activeLayer == layerId) {
+		m_activeLayer = 0;
+	} else if (m_activeLayer > layerId) {
+		m_activeLayer--;
+	}
+
+	refreshCurveLayerProperties();
+	m_guides.deselectAll();
+	clearMirrorPairs();
+	m_hoverCurve = -1;
+	m_hoverHighlightActive = false;
+	endDragVertex();
+	return true;
+}
+
+void Scene::setActiveLayer(int layerId) {
+	if (layerId < 0 || layerId >= (int)m_layers.size()) return;
+	if (m_activeLayer == layerId) return;
+	m_activeLayer = layerId;
+	m_guides.deselectAll();
+	clearMirrorPairs();
+	m_hoverCurve = -1;
+	m_hoverHighlightActive = false;
+	endDragVertex();
+}
+
+void Scene::setLayerVisible(int layerId, bool visible) {
+	if (layerId < 0 || layerId >= (int)m_layers.size()) return;
+	m_layers[(size_t)layerId].visible = visible;
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		HairCurve& c = m_guides.curve(ci);
+		if (c.layerId == layerId) {
+			c.visible = visible;
+		}
+	}
+}
+
+void Scene::setLayerColor(int layerId, const glm::vec3& color) {
+	if (layerId < 0 || layerId >= (int)m_layers.size()) return;
+	m_layers[(size_t)layerId].color = color;
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		HairCurve& c = m_guides.curve(ci);
+		if (c.layerId == layerId) {
+			c.color = color;
+		}
+	}
+}
+
+bool Scene::isLayerVisible(int layerId) const {
+	if (layerId < 0 || layerId >= (int)m_layers.size()) return false;
+	return m_layers[(size_t)layerId].visible;
+}
+
+static glm::vec3 hsvToRgb(float h, float s, float v) {
+	float r = v, g = v, b = v;
+	if (s > 0.0f) {
+		h = std::fmod(h, 1.0f) * 6.0f;
+		int i = (int)std::floor(h);
+		float f = h - (float)i;
+		float p = v * (1.0f - s);
+		float q = v * (1.0f - s * f);
+		float t = v * (1.0f - s * (1.0f - f));
+		switch (i) {
+			case 0: r = v; g = t; b = p; break;
+			case 1: r = q; g = v; b = p; break;
+			case 2: r = p; g = v; b = t; break;
+			case 3: r = p; g = q; b = v; break;
+			case 4: r = t; g = p; b = v; break;
+			default: r = v; g = p; b = q; break;
+		}
+	}
+	return glm::vec3(r, g, b);
+}
+
+glm::vec3 Scene::generateDistinctLayerColor() {
+	std::mt19937 rng((uint32_t)std::chrono::high_resolution_clock::now().time_since_epoch().count());
+	std::uniform_real_distribution<float> dist(0.1f, 0.95f);
+
+	auto isDistinct = [&](const glm::vec3& c) {
+		const float minDist = 0.35f;
+		for (const auto& layer : m_layers) {
+			float d = glm::length(c - layer.color);
+			if (d < minDist) return false;
+		}
+		return true;
+	};
+
+	for (int i = 0; i < 32; i++) {
+		glm::vec3 c(dist(rng), dist(rng), dist(rng));
+		if (isDistinct(c)) return c;
+	}
+
+	// Fallback: golden-ratio hue sweep for distinctness
+	float h = std::fmod((float)m_layers.size() * 0.61803398875f, 1.0f);
+	return hsvToRgb(h, 0.65f, 0.95f);
+}
+
+void Scene::refreshCurveLayerProperties() {
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		HairCurve& c = m_guides.curve(ci);
+		if (c.layerId < 0 || c.layerId >= (int)m_layers.size()) c.layerId = 0;
+		const LayerInfo& layer = m_layers[(size_t)c.layerId];
+		c.color = layer.color;
+		c.visible = layer.visible;
+	}
 }
 
 void Scene::resetSettingsToDefaults() {
@@ -128,7 +296,33 @@ void Scene::clearCurves() {
 }
 
 void Scene::tick() {
-	// placeholder for per-frame updates
+	// Remove zero-length curves to prevent export issues.
+	std::vector<int> toRemove;
+	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
+		const HairCurve& c = m_guides.curve(ci);
+		if (c.points.size() < 2) {
+			toRemove.push_back((int)ci);
+			continue;
+		}
+		float sum = 0.0f;
+		for (size_t i = 0; i + 1 < c.points.size(); i++) {
+			sum += glm::length(c.points[i + 1] - c.points[i]);
+		}
+		if (sum <= 1e-6f) {
+			toRemove.push_back((int)ci);
+		}
+	}
+	if (!toRemove.empty()) {
+		std::sort(toRemove.begin(), toRemove.end());
+		toRemove.erase(std::unique(toRemove.begin(), toRemove.end()), toRemove.end());
+		std::reverse(toRemove.begin(), toRemove.end());
+		m_guides.removeCurves(toRemove);
+		clearMirrorPairs();
+		m_guides.deselectAll();
+		m_hoverCurve = -1;
+		m_hoverHighlightActive = false;
+		endDragVertex();
+	}
 }
 
 void Scene::simulate(float dt) {
@@ -179,7 +373,7 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 			glm::vec3 ro, rd;
 			camera.rayFromPixel(px, py, ro, rd);
 			int hc = -1;
-			if (m_guides.pickCurve(ro, rd, hc)) {
+			if (m_guides.pickCurve(ro, rd, hc, m_activeLayer, true)) {
 				m_hoverCurve = hc;
 				m_hoverHighlightActive = true;
 			}
@@ -234,7 +428,8 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 		RayHit hit;
 		if (!Raycast::raycastMesh(*m_mesh, ro, rd, hit)) return;
 
-		int newIdx = m_guides.addCurveOnMesh(*m_mesh, hit.triIndex, hit.bary, hit.position, hit.normal, m_guideSettings);
+		const LayerInfo& layer = m_layers[(size_t)m_activeLayer];
+		int newIdx = m_guides.addCurveOnMesh(*m_mesh, hit.triIndex, hit.bary, hit.position, hit.normal, m_guideSettings, m_activeLayer, layer.color, layer.visible);
 		if (newIdx >= 0) {
 			// Mirror mode: only affects newly created curves while it is enabled.
 			const bool mirrorOn = m_guideSettings.mirrorMode;
@@ -242,7 +437,7 @@ void Scene::handleViewportMouse(const MayaCameraController& camera, int viewport
 				RayHit mh;
 				glm::vec3 mp = mirrorX(hit.position);
 				if (Raycast::nearestOnMesh(*m_mesh, mp, mh)) {
-					int mirrorIdx = m_guides.addCurveOnMesh(*m_mesh, mh.triIndex, mh.bary, mh.position, mh.normal, m_guideSettings);
+					int mirrorIdx = m_guides.addCurveOnMesh(*m_mesh, mh.triIndex, mh.bary, mh.position, mh.normal, m_guideSettings, m_activeLayer, layer.color, layer.visible);
 					if (mirrorIdx >= 0) {
 						// Mirror the initial shape 1:1 across the plane X=0.
 						const HairCurve& src = m_guides.curve((size_t)newIdx);
@@ -306,7 +501,7 @@ void Scene::beginDragVertex(const MayaCameraController& camera, int viewportW, i
 	camera.rayFromPixel(px, py, ro, rd);
 
 	// 1) Try picking a control vertex
-	if (m_guides.pickControlPoint(ro, rd, camera.position(), camera.viewProj(), m_dragCurve, m_dragVert, true)) {
+	if (m_guides.pickControlPoint(ro, rd, camera.position(), camera.viewProj(), m_dragCurve, m_dragVert, true, m_activeLayer, true)) {
 		// Ensure the dragged curve is active (without changing multi-selection)
 		m_guides.selectCurve(m_dragCurve, true);
 		m_dragging = true;

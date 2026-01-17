@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <unordered_map>
 
@@ -17,6 +18,12 @@ struct RenderSettings {
 	bool showGuides = true;
 	float guidePointSizePx = 6.0f;
 	float deselectedCurveOpacity = 1.0f;
+};
+
+struct LayerInfo {
+	std::string name;
+	glm::vec3 color{0.90f, 0.75f, 0.22f};
+	bool visible = true;
 };
 
 class Scene {
@@ -43,6 +50,20 @@ public:
 
 	RenderSettings& renderSettings() { return m_renderSettings; }
 	const RenderSettings& renderSettings() const { return m_renderSettings; }
+
+	// Layers
+	int activeLayer() const { return m_activeLayer; }
+	size_t layerCount() const { return m_layers.size(); }
+	const LayerInfo& layer(size_t idx) const { return m_layers[idx]; }
+	LayerInfo& layer(size_t idx) { return m_layers[idx]; }
+	void setLayers(const std::vector<LayerInfo>& layers, int activeLayer);
+	int addLayer(const std::string& name, const glm::vec3& color, bool visible = true);
+	bool deleteLayer(int layerId);
+	void setActiveLayer(int layerId);
+	void setLayerVisible(int layerId, bool visible);
+	void setLayerColor(int layerId, const glm::vec3& color);
+	bool isLayerVisible(int layerId) const;
+	glm::vec3 generateDistinctLayerColor();
 
 	void tick();
 	void simulate(float dt);
@@ -78,6 +99,9 @@ private:
 	GuideSettings m_guideSettings;
 	RenderSettings m_renderSettings;
 
+	std::vector<LayerInfo> m_layers;
+	int m_activeLayer = 0;
+
 	// Interaction state
 	int m_dragCurve = -1;
 	int m_dragVert = -1;
@@ -103,4 +127,6 @@ private:
 	void beginDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);
 	void updateDragVertex(const MayaCameraController& camera, int viewportW, int viewportH);
 	void endDragVertex();
+	void resetLayers();
+	void refreshCurveLayerProperties();
 };

@@ -23,7 +23,7 @@ static glm::vec3 jsonToVec3(const Json::Value& a) {
 
 bool Serialization::saveScene(const Scene& scene, const Camera& camera, const std::string& path) {
 	Json::Value root;
-	root["version"] = 1;
+	root["version"] = 2;
 	root["meshPath"] = scene.meshPath();
 	root["meshTexturePath"] = scene.meshTexturePath();
 
@@ -55,12 +55,26 @@ bool Serialization::saveScene(const Scene& scene, const Camera& camera, const st
 	jgs["dragLerp"] = gs.dragLerp;
 	root["guideSettings"] = jgs;
 
+	// Layers
+	Json::Value layers(Json::arrayValue);
+	for (size_t li = 0; li < scene.layerCount(); li++) {
+		const LayerInfo& layer = scene.layer(li);
+		Json::Value jl;
+		jl["name"] = layer.name;
+		jl["color"] = vec3ToJson(layer.color);
+		jl["visible"] = layer.visible;
+		layers.append(jl);
+	}
+	root["layers"] = layers;
+	root["activeLayer"] = scene.activeLayer();
+
 	Json::Value curves(Json::arrayValue);
 	for (size_t ci = 0; ci < scene.guides().curveCount(); ci++) {
 		const HairCurve& c = scene.guides().curve(ci);
 		Json::Value jc;
 		jc["rootTri"] = c.root.triIndex;
 		jc["rootBary"] = vec3ToJson(c.root.bary);
+		jc["layer"] = c.layerId;
 
 		Json::Value pts(Json::arrayValue);
 		for (const glm::vec3& p : c.points) pts.append(vec3ToJson(p));
@@ -136,6 +150,36 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 		gs.dragLerp = jgs.get("dragLerp", gs.dragLerp).asFloat();
 	}
 
+	// Layers
+	std::vector<LayerInfo> layers;
+	Json::Value jlayers = root["layers"];
+	if (jlayers.isArray()) {
+		for (Json::ArrayIndex li = 0; li < jlayers.size(); li++) {
+			Json::Value jl = jlayers[li];
+			LayerInfo l;
+			l.name = jl.get("name", std::string("Layer ") + std::to_string((int)li)).asString();
+			l.color = jsonToVec3(jl["color"]);
+			if (!jl["color"].isArray() || jl["color"].size() != 3) {
+				l.color = glm::vec3(0.90f, 0.75f, 0.22f);
+			}
+			l.visible = jl.get("visible", true).asBool();
+			layers.push_back(l);
+		}
+	}
+	int activeLayer = root.get("activeLayer", 0).asInt();
+	if (!layers.empty()) {
+		scene.setLayers(layers, activeLayer);
+	} else {
+		// Backward compatibility: default single layer
+		std::vector<LayerInfo> fallback;
+		LayerInfo base;
+		base.name = "Layer 0";
+		base.color = glm::vec3(0.90f, 0.75f, 0.22f);
+		base.visible = true;
+		fallback.push_back(base);
+		scene.setLayers(fallback, 0);
+	}
+
 	scene.guides().clear();
 	Json::Value curves = root["curves"];
 	if (curves.isArray()) {
@@ -144,6 +188,8 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 			HairCurve c;
 			c.root.triIndex = jc.get("rootTri", -1).asInt();
 			c.root.bary = jsonToVec3(jc["rootBary"]);
+			c.layerId = jc.get("layer", 0).asInt();
+			if (c.layerId < 0 || c.layerId >= (int)scene.layerCount()) c.layerId = 0;
 
 			Json::Value pts = jc["points"];
 			if (pts.isArray()) {
@@ -162,11 +208,14 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 			}
 
 			// Append via addCurveOnMesh (to preserve internal invariants), then overwrite with loaded data.
+			const LayerInfo& layer = scene.layer((size_t)c.layerId);
 			scene.guides().addCurveOnMesh(*scene.mesh(), c.root.triIndex, c.root.bary,
 				c.points.empty() ? glm::vec3(0) : c.points[0],
-				glm::vec3(0, 1, 0), gs);
+				glm::vec3(0, 1, 0), gs, c.layerId, layer.color, layer.visible);
 			HairCurve& dst = scene.guides().curve(scene.guides().curveCount() - 1);
 			dst = c;
+			dst.color = layer.color;
+			dst.visible = layer.visible;
 		}
 	}
 

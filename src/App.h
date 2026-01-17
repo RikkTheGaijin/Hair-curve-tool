@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <array>
 
 struct GLFWwindow;
 
@@ -28,6 +29,7 @@ private:
 
 	void drawMenuBar();
 	void drawSidePanel();
+	void drawLayersPanel();
 	void drawControlsOverlay();
 	void drawGuideCounterOverlay();
 	void drawToastOverlay();
@@ -55,6 +57,7 @@ private:
 	// UI state
 	bool m_showDemoWindow = false;
 	bool m_showControlsOverlay = true;
+	bool m_showLayersPanel = true;
 	float m_uiScale = 1.0f;
 	float m_uiScaleApplied = 1.0f;
 	std::string m_lastObjPath;
@@ -75,4 +78,7 @@ private:
 	uint64_t m_selectedCurvesSignature = 0;
 	bool m_selectedLengthMixed = false;
 	bool m_selectedStepsMixed = false;
+
+	int m_layerRenameId = -1;
+	std::array<char, 64> m_layerRenameBuffer{};
 };

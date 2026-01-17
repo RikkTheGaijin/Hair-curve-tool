@@ -26,6 +26,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <unordered_set>
 
 App::~App() = default;
 
@@ -39,7 +41,7 @@ bool App::init() {
 	m_renderer = std::make_unique<Renderer>();
 
 	// Load persistent user settings early so we can restore window size before creating the window.
-	UserSettings::load(*m_scene, m_viewportBg, m_showControlsOverlay, m_uiScale, m_windowWidth, m_windowHeight, m_windowMaximized);
+	UserSettings::load(*m_scene, m_viewportBg, m_showControlsOverlay, m_showLayersPanel, m_uiScale, m_windowWidth, m_windowHeight, m_windowMaximized);
 
 	if (!initWindow()) return false;
 	if (!initGL()) return false;
@@ -158,6 +160,7 @@ void App::run() {
 		}
 		drawMenuBar();
 		drawSidePanel();
+		drawLayersPanel();
 		drawControlsOverlay();
 		drawGuideCounterOverlay();
 		drawToastOverlay();
@@ -216,7 +219,7 @@ void App::shutdown() {
 		glfwGetWindowSize(m_window, &w, &h);
 		maximized = (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE);
 	}
-	UserSettings::save(*m_scene, m_viewportBg, m_showControlsOverlay, m_uiScale, w, h, maximized);
+	UserSettings::save(*m_scene, m_viewportBg, m_showControlsOverlay, m_showLayersPanel, m_uiScale, w, h, maximized);
 	shutdownImGui();
 	if (m_window) glfwDestroyWindow(m_window);
 	glfwTerminate();
@@ -259,6 +262,7 @@ void App::drawMenuBar() {
 		if (ImGui::BeginMenu("View")) {
 			ImGui::MenuItem("ImGui Demo", nullptr, &m_showDemoWindow);
 			ImGui::MenuItem("Controls Help", nullptr, &m_showControlsOverlay);
+			ImGui::MenuItem("Layers Panel", nullptr, &m_showLayersPanel);
 			if (ImGui::BeginMenu("UI Scale")) {
 				bool s1 = (m_uiScale == 1.0f);
 				bool s15 = (m_uiScale == 1.5f);
@@ -464,6 +468,106 @@ void App::drawSidePanel() {
 	ImGui::End();
 }
 
+void App::drawLayersPanel() {
+	if (!m_showLayersPanel) return;
+
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 10.0f, vp->Pos.y + 60.0f), ImGuiCond_FirstUseEver, ImVec2(0.0f, 0.0f));
+	ImGui::SetNextWindowSize(ImVec2(260, 320), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("Layers", &m_showLayersPanel)) {
+		ImGui::End();
+		return;
+	}
+
+	// Clamp to work area
+	{
+		ImVec2 workMin = vp->WorkPos;
+		ImVec2 workMax = ImVec2(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
+		ImVec2 pos = ImGui::GetWindowPos();
+		ImVec2 size = ImGui::GetWindowSize();
+		float maxX = workMax.x - size.x;
+		float maxY = workMax.y - size.y;
+		ImVec2 clamped;
+		clamped.x = (pos.x < workMin.x) ? workMin.x : ((pos.x > maxX) ? maxX : pos.x);
+		clamped.y = (pos.y < workMin.y) ? workMin.y : ((pos.y > maxY) ? maxY : pos.y);
+		if (maxX < workMin.x) clamped.x = workMin.x;
+		if (maxY < workMin.y) clamped.y = workMin.y;
+		if (clamped.x != pos.x || clamped.y != pos.y) {
+			ImGui::SetWindowPos(clamped, ImGuiCond_Always);
+		}
+	}
+
+	if (ImGui::Button("Add Layer")) {
+		glm::vec3 col = m_scene->generateDistinctLayerColor();
+		std::string name = "Layer " + std::to_string(m_scene->layerCount());
+		int id = m_scene->addLayer(name, col, true);
+		m_scene->setActiveLayer(id);
+	}
+	ImGui::SameLine();
+	const bool canDelete = (m_scene->activeLayer() != 0);
+	if (!canDelete) ImGui::BeginDisabled();
+	if (ImGui::Button("Delete Layer")) {
+		m_scene->deleteLayer(m_scene->activeLayer());
+	}
+	if (!canDelete) ImGui::EndDisabled();
+
+	ImGui::Separator();
+
+	if (ImGui::BeginTable("LayersTable", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit)) {
+		ImGui::TableSetupColumn("V", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+		ImGui::TableSetupColumn("C", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+		ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch);
+		for (int li = (int)m_scene->layerCount() - 1; li >= 0; li--) {
+			size_t i = (size_t)li;
+			LayerInfo& layer = m_scene->layer(i);
+			ImGui::PushID((int)li);
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			if (ImGui::SmallButton(layer.visible ? "V" : " ")) {
+				m_scene->setLayerVisible((int)i, !layer.visible);
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip(layer.visible ? "Hide Layer" : "Show Layer");
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			float col[3] = { layer.color.r, layer.color.g, layer.color.b };
+			if (ImGui::ColorEdit3("##layercolor", col, ImGuiColorEditFlags_NoInputs)) {
+				m_scene->setLayerColor((int)i, glm::vec3(col[0], col[1], col[2]));
+			}
+
+			ImGui::TableSetColumnIndex(2);
+			const bool active = ((int)i == m_scene->activeLayer());
+			if (m_layerRenameId == (int)i) {
+				ImGuiInputTextFlags flags = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue;
+				if (ImGui::InputText("##layername", m_layerRenameBuffer.data(), m_layerRenameBuffer.size(), flags)) {
+					std::string newName = m_layerRenameBuffer.data();
+					if (!newName.empty()) layer.name = newName;
+					m_layerRenameId = -1;
+				}
+				if (ImGui::IsItemDeactivatedAfterEdit()) {
+					std::string newName = m_layerRenameBuffer.data();
+					if (!newName.empty()) layer.name = newName;
+					m_layerRenameId = -1;
+				}
+			} else {
+				if (ImGui::Selectable(layer.name.c_str(), active, ImGuiSelectableFlags_SpanAllColumns)) {
+					m_scene->setActiveLayer((int)i);
+				}
+				if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+					m_layerRenameId = (int)i;
+					std::strncpy(m_layerRenameBuffer.data(), layer.name.c_str(), m_layerRenameBuffer.size() - 1);
+					m_layerRenameBuffer[m_layerRenameBuffer.size() - 1] = '\0';
+				}
+			}
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
+	}
+
+	ImGui::End();
+}
+
 void App::handleViewportInput() {
 	ImGuiIO& io = ImGui::GetIO();
 	// Don't handle camera input if ImGui wants the mouse (over a window/menu)
@@ -599,11 +703,21 @@ void App::actionImportCurvesPly() {
 		return;
 	}
 
-	// Replace current curves with imported ones.
-	m_scene->clearCurves();
-
 	const Mesh& mesh = *m_scene->mesh();
 	const GuideSettings& gs = m_scene->guideSettings();
+	const int activeLayer = m_scene->activeLayer();
+	const LayerInfo& layer = m_scene->layer((size_t)activeLayer);
+	const float dupRootTol = std::max(0.0005f, gs.collisionThickness * 0.5f);
+	std::vector<int> existingLayerCurves;
+	std::vector<glm::vec3> existingRoots;
+	for (size_t ci = 0; ci < m_scene->guides().curveCount(); ci++) {
+		const HairCurve& c = m_scene->guides().curve(ci);
+		if (c.layerId != activeLayer) continue;
+		if (c.points.empty()) continue;
+		existingLayerCurves.push_back((int)ci);
+		existingRoots.push_back(c.points[0]);
+	}
+	std::vector<int> removeExisting;
 
 	int droppedNoBinding = 0;
 	int droppedInvalid = 0;
@@ -634,8 +748,19 @@ void App::actionImportCurvesPly() {
 			continue;
 		}
 
+		// Duplicate detection: if an existing curve in the active layer has the same root, replace it.
+		for (size_t ei = 0; ei < existingLayerCurves.size(); ei++) {
+			int existingIdx = existingLayerCurves[ei];
+			if (existingIdx < 0) continue;
+			if (glm::length(existingRoots[ei] - hit.position) <= dupRootTol) {
+				removeExisting.push_back(existingIdx);
+				existingLayerCurves[ei] = -1;
+				break;
+			}
+		}
+
 		// Append via addCurveOnMesh (to preserve invariants), then overwrite with imported points.
-		m_scene->guides().addCurveOnMesh(mesh, hit.triIndex, hit.bary, hit.position, hit.normal, gs);
+		m_scene->guides().addCurveOnMesh(mesh, hit.triIndex, hit.bary, hit.position, hit.normal, gs, activeLayer, layer.color, layer.visible);
 		HairCurve& dst = m_scene->guides().curve(m_scene->guides().curveCount() - 1);
 		dst.root.triIndex = hit.triIndex;
 		dst.root.bary = hit.bary;
@@ -649,9 +774,21 @@ void App::actionImportCurvesPly() {
 		if (dst.points.size() >= 2) {
 			float sum = 0.0f;
 			for (size_t si = 0; si + 1 < dst.points.size(); si++) sum += glm::length(dst.points[si + 1] - dst.points[si]);
+			if (sum <= 1e-6f) {
+				droppedInvalid++;
+				m_scene->guides().removeCurve((int)m_scene->guides().curveCount() - 1);
+				continue;
+			}
 			dst.segmentRestLen = sum / (float)(dst.points.size() - 1);
 		}
 		imported++;
+	}
+
+	if (!removeExisting.empty()) {
+		std::sort(removeExisting.begin(), removeExisting.end());
+		removeExisting.erase(std::unique(removeExisting.begin(), removeExisting.end()), removeExisting.end());
+		std::reverse(removeExisting.begin(), removeExisting.end());
+		m_scene->guides().removeCurves(removeExisting);
 	}
 
 	m_scene->guides().deselectAll();

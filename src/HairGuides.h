@@ -34,6 +34,9 @@ struct HairCurve {
 	std::vector<glm::vec3> points;      // control points used for physics
 	std::vector<glm::vec3> prevPoints;  // for verlet
 	float segmentRestLen = 0.0f;
+	int layerId = 0;
+	glm::vec3 color{0.90f, 0.75f, 0.22f};
+	bool visible = true;
 };
 
 class HairGuideSet {
@@ -45,7 +48,7 @@ public:
 	HairCurve& curve(size_t idx) { return m_curves[idx]; }
 
 	// Returns the new curve index, or -1 on failure.
-	int addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3& bary, const glm::vec3& hitPos, const glm::vec3& hitNormal, const GuideSettings& settings);
+	int addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3& bary, const glm::vec3& hitPos, const glm::vec3& hitNormal, const GuideSettings& settings, int layerId, const glm::vec3& color, bool visible);
 
 	// Selection / active curve
 	bool isCurveSelected(size_t curveIdx) const;
@@ -57,8 +60,8 @@ public:
 	void applyLengthStepsToSelected(float newLength, int newSteps);
 
 	// Interaction
-	bool pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& camPos, const glm::mat4& viewProj, int& outCurve, int& outVert, bool selectedOnly = false) const;
-	bool pickCurve(const glm::vec3& ro, const glm::vec3& rd, int& outCurve) const;
+	bool pickControlPoint(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& camPos, const glm::mat4& viewProj, int& outCurve, int& outVert, bool selectedOnly = false, int activeLayer = -1, bool requireVisible = true) const;
+	bool pickCurve(const glm::vec3& ro, const glm::vec3& rd, int& outCurve, int activeLayer = -1, bool requireVisible = true) const;
 	void moveControlPoint(int curveIdx, int vertIdx, const glm::vec3& worldPos);
 	void removeCurve(int curveIdx);
 	void removeCurves(const std::vector<int>& curveIndicesDescending);
