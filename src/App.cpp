@@ -441,9 +441,15 @@ void App::drawSidePanel() {
 	ImGui::SliderFloat("Friction", &gs.collisionFriction, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderInt("Solver Iterations", &gs.solverIterations, 1, 32);
 	ImGui::SliderFloat("Gravity", &gs.gravity, 0.0f, 30.0f, "%.2f m/s^2");
-	ImGui::SliderFloat("Damping", &gs.damping, 0.90f, 1.0f, "%.3f");
+	float dampingAmount = 1.0f - glm::clamp(gs.damping, 0.0f, 1.0f);
+	if (ImGui::SliderFloat("Damping", &dampingAmount, 0.0f, 1.0f, "%.3f")) {
+		gs.damping = 1.0f - glm::clamp(dampingAmount, 0.0f, 1.0f);
+	}
 	ImGui::SliderFloat("Bend Stiffness", &gs.stiffness, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat("Drag Smooth", &gs.dragLerp, 0.05f, 1.0f, "%.2f");
+	float dragSmooth = 1.0f - glm::clamp(gs.dragLerp, 0.0f, 1.0f);
+	if (ImGui::SliderFloat("Drag Smooth", &dragSmooth, 0.0f, 1.0f, "%.2f")) {
+		gs.dragLerp = 1.0f - glm::clamp(dragSmooth, 0.0f, 1.0f);
+	}
 
 	ImGui::Spacing();
 	ImGui::TextUnformatted("Viewport");

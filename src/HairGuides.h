@@ -21,7 +21,7 @@ struct GuideSettings {
 	float gravity = 0.0f;               // m/s^2 (world units are meters)
 	float damping = 0.900f;             // Verlet velocity damping [0..1]
 	float stiffness = 0.10f;            // Distance constraint stiffness [0..1]
-	float dragLerp = 0.35f;             // Mouse drag smoothing [0..1] (higher = snappier)
+	float dragLerp = 1.0f;              // Mouse drag smoothing [0..1] (higher = snappier)
 };
 
 struct HairRootBinding {
