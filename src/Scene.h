@@ -36,6 +36,8 @@ enum class HairDistributionType {
 struct HairSettings {
 	int hairCount = 20000;
 	HairDistributionType distribution = HairDistributionType::Even;
+	int hairResolution = 40;
+	float smoothness = 0.0f;
 	float rootThickness = 0.0010f;
 	float midThickness = 0.0050f;
 	float tipThickness = 0.0001f;

@@ -556,6 +556,11 @@ void App::drawSidePanel() {
 		ImGui::SliderFloat("Hair Thickness", &hs.midThickness, 0.00005f, 0.02f, "%.5f m");
 		ImGui::SliderFloat("Tip Thickness", &hs.tipThickness, 0.00001f, 0.01f, "%.5f m");
 		ImGui::SliderFloat("Tip Extent", &hs.tipExtent, 0.0f, 0.05f, "%.4f m");
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Hair Resolution");
+		ImGui::Separator();
+		ImGui::SliderInt("Resolution", &hs.hairResolution, 3, 100);
+		ImGui::SliderFloat("Smoothness", &hs.smoothness, 0.0f, 1.0f, "%.2f");
 	}
 
 	ImGui::Spacing();

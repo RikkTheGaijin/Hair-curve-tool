@@ -380,6 +380,37 @@ static glm::vec3 sampleCurveAtLength(const HairCurve& c, float length) {
 	return c.points.back();
 }
 
+static glm::vec3 catmullRom(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, float t) {
+	float t2 = t * t;
+	float t3 = t2 * t;
+	return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+}
+
+static glm::vec3 sampleCurveAtLengthSmooth(const HairCurve& c, float length, float smoothness) {
+	if (smoothness <= 1e-4f) return sampleCurveAtLength(c, length);
+	if (c.points.empty()) return glm::vec3(0.0f);
+	if (c.points.size() == 1) return c.points[0];
+
+	float remaining = glm::max(0.0f, length);
+	for (size_t i = 0; i + 1 < c.points.size(); i++) {
+		glm::vec3 a = c.points[i];
+		glm::vec3 b = c.points[i + 1];
+		float seg = glm::length(b - a);
+		if (remaining <= seg || i + 1 == c.points.size() - 1) {
+			float t = (seg > 1e-6f) ? (remaining / seg) : 0.0f;
+			glm::vec3 p0 = c.points[(i > 0) ? (i - 1) : i];
+			glm::vec3 p1 = c.points[i];
+			glm::vec3 p2 = c.points[i + 1];
+			glm::vec3 p3 = c.points[(i + 2 < c.points.size()) ? (i + 2) : (i + 1)];
+			glm::vec3 pLin = glm::mix(p1, p2, t);
+			glm::vec3 pCr = catmullRom(p0, p1, p2, p3, t);
+			return glm::mix(pLin, pCr, glm::clamp(smoothness, 0.0f, 1.0f));
+		}
+		remaining -= seg;
+	}
+	return c.points.back();
+}
+
 static bool loadMaskData(const std::string& path, MaskData& outMask) {
 	outMask = MaskData();
 	if (path.empty()) return false;
@@ -1060,7 +1091,7 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 		guideLengths.push_back(len);
 	}
 
-	const int steps = glm::max(2, m_guideSettings.defaultSteps);
+	const int steps = glm::clamp(m_hairSettings.hairResolution, 3, 100);
 	const float defaultLen = m_guideSettings.defaultLength;
 
 	int strandCount = 0;
@@ -1096,7 +1127,7 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 			for (int si = 0; si < steps; si++) {
 				float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
 				float s = t * useLen;
-				glm::vec3 gp = sampleCurveAtLength(*guide, s);
+				glm::vec3 gp = sampleCurveAtLengthSmooth(*guide, s, m_hairSettings.smoothness);
 				pts.push_back(gp + delta);
 			}
 		} else {
@@ -1429,7 +1460,7 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 		guideLengths.push_back(len);
 	}
 
-	const int steps = glm::max(2, m_guideSettings.defaultSteps);
+	const int steps = glm::clamp(m_hairSettings.hairResolution, 3, 100);
 	const float defaultLen = m_guideSettings.defaultLength;
 
 	int strandCount = 0;
@@ -1477,7 +1508,7 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 			for (int si = 0; si < steps; si++) {
 				float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
 				float s = t * useLen;
-				glm::vec3 gp = sampleCurveAtLength(*guide, s);
+				glm::vec3 gp = sampleCurveAtLengthSmooth(*guide, s, m_hairSettings.smoothness);
 				pts.push_back(gp + delta);
 			}
 		} else {
