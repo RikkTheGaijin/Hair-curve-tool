@@ -364,6 +364,9 @@ void App::drawGuideCounterOverlay() {
 	if (ImGui::Begin("##GuideCounter", nullptr, flags)) {
 		if (m_scene->activeModule() == ModuleType::Hair) {
 			ImGui::Text("Hair: %d", m_scene->lastHairCount());
+			if (m_renderer) {
+				ImGui::Text("Build: %.2f ms%s", m_renderer->lastHairBuildMs(), m_renderer->hairRebuiltThisFrame() ? "" : " (cached)");
+			}
 		} else {
 			ImGui::Text("Guides: %d", m_cachedGuideCount);
 		}

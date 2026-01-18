@@ -12,6 +12,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstring>
+#include <chrono>
 
 static const char* kMeshVs = R"(
 #version 330 core
@@ -85,14 +86,16 @@ void main(){ oColor = vCol; }
 
 static const char* kHairVs = R"(
 #version 330 core
-layout(location=0) in vec3 aPos;
-layout(location=1) in vec3 aTangent;
-layout(location=2) in float aS;
-layout(location=3) in float aSide;
-layout(location=4) in float aLen;
+layout(location=0) in float aSeg;
+layout(location=1) in float aEnd;
+layout(location=2) in float aSide;
+layout(location=3) in float aLen; // per-instance
 
 uniform mat4 uViewProj;
 uniform vec3 uCamPos;
+uniform samplerBuffer uStrandPoints;
+uniform int uStrandSteps;
+
 uniform float uRootThickness;
 uniform float uMidThickness;
 uniform float uTipThickness;
@@ -103,19 +106,23 @@ out vec3 vPos;
 out vec3 vNrm;
 
 void main(){
-	vec3 t = normalize(aTangent);
-	vec3 viewDir = normalize(uCamPos - aPos);
+	int seg = int(aSeg);
+	int base = gl_InstanceID * uStrandSteps;
+	vec3 p0 = texelFetch(uStrandPoints, base + seg).xyz;
+	vec3 p1 = texelFetch(uStrandPoints, base + seg + 1).xyz;
+	vec3 p = mix(p0, p1, aEnd);
+	vec3 t = normalize(p1 - p0);
+	vec3 viewDir = normalize(uCamPos - p);
 	vec3 side = normalize(cross(viewDir, t));
+
 	float rootExt = max(uRootExtent, 0.0);
 	float tipExt = max(uTipExtent, 0.0);
 	float len = max(aLen, 0.0001);
-	float s = clamp(aS, 0.0, len);
+	float s = (float(seg) + aEnd) * (len / max(float(uStrandSteps - 1), 1.0));
 	float width = uMidThickness;
 	if (rootExt > 1e-6) {
 		float rt = clamp(s / rootExt, 0.0, 1.0);
 		width = mix(uRootThickness, uMidThickness, rt);
-	} else {
-		width = uMidThickness;
 	}
 	if (tipExt > 1e-6) {
 		float tipStart = max(len - tipExt, 0.0);
@@ -124,7 +131,8 @@ void main(){
 			width = mix(uMidThickness, uTipThickness, tt);
 		}
 	}
-	vec3 pos = aPos + side * (width * aSide);
+
+	vec3 pos = p + side * (width * aSide);
 	vPos = pos;
 	vNrm = normalize(cross(t, side));
 	gl_Position = uViewProj * vec4(pos, 1.0);
@@ -315,50 +323,94 @@ static uint64_t computeHairCacheKey(const Scene& scene) {
 }
 
 void Renderer::uploadHair(const Scene& scene) {
-	const bool force = scene.guideSettings().enableSimulation || scene.isDragging();
+	m_hairRebuiltThisFrame = false;
+	const bool force = scene.isDragging();
 	const uint64_t key = computeHairCacheKey(scene);
 	if (!force && m_hairCacheValid && m_hairCacheKey == key) {
 		return;
 	}
-	HairRenderData data;
-	scene.buildHairRenderData(data);
-	if (data.indices.empty() || data.vertices.empty()) {
-		m_hairIndexCount = 0;
+	auto t0 = std::chrono::high_resolution_clock::now();
+	HairStrandData data;
+	scene.buildHairStrands(data);
+	if (data.strandCount <= 0 || data.points.empty()) {
+		m_hairInstanceCount = 0;
+		m_hairRebuiltThisFrame = true;
+		m_hairRebuildCount++;
+		auto t1 = std::chrono::high_resolution_clock::now();
+		m_hairBuildMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 		m_hairCacheValid = true;
 		m_hairCacheKey = key;
 		return;
 	}
 
-	if (m_hairVao == 0) {
-		glGenVertexArrays(1, &m_hairVao);
-		glGenBuffers(1, &m_hairVbo);
-		glGenBuffers(1, &m_hairEbo);
-		glBindVertexArray(m_hairVao);
-		glBindBuffer(GL_ARRAY_BUFFER, m_hairVbo);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_hairEbo);
+	// Build or update strand template geometry (one quad per segment).
+	if (m_hairTemplateVbo == 0 || m_hairSteps != data.steps) {
+		m_hairSteps = data.steps;
+		std::vector<float> tpl;
+		int segCount = glm::max(1, m_hairSteps - 1);
+		tpl.reserve((size_t)segCount * 6u * 3u);
+		for (int s = 0; s < segCount; s++) {
+			float seg = (float)s;
+			// Two triangles (6 vertices) for quad
+			float v[6][3] = {
+				{seg, 0.0f, -1.0f},
+				{seg, 0.0f,  1.0f},
+				{seg, 1.0f, -1.0f},
+				{seg, 1.0f, -1.0f},
+				{seg, 0.0f,  1.0f},
+				{seg, 1.0f,  1.0f}
+			};
+			for (int i = 0; i < 6; i++) {
+				tpl.push_back(v[i][0]);
+				tpl.push_back(v[i][1]);
+				tpl.push_back(v[i][2]);
+			}
+		}
 
-		const int stride = 9 * sizeof(float);
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
-		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
-		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
-		glEnableVertexAttribArray(3);
-		glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void*)(7 * sizeof(float)));
-		glEnableVertexAttribArray(4);
-		glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
-		glBindVertexArray(0);
+		if (m_hairTemplateVbo == 0) glGenBuffers(1, &m_hairTemplateVbo);
+		glBindBuffer(GL_ARRAY_BUFFER, m_hairTemplateVbo);
+		glBufferData(GL_ARRAY_BUFFER, tpl.size() * sizeof(float), tpl.data(), GL_STATIC_DRAW);
+		m_hairTemplateVertexCount = (int)(tpl.size() / 3u);
 	}
 
+	if (m_hairPointBuffer == 0) glGenBuffers(1, &m_hairPointBuffer);
+	if (m_hairPointTex == 0) glGenTextures(1, &m_hairPointTex);
+	if (m_hairInstanceVbo == 0) glGenBuffers(1, &m_hairInstanceVbo);
+	if (m_hairVao == 0) glGenVertexArrays(1, &m_hairVao);
+
+	// Upload strand point buffer (texture buffer)
+	glBindBuffer(GL_TEXTURE_BUFFER, m_hairPointBuffer);
+	glBufferData(GL_TEXTURE_BUFFER, data.points.size() * sizeof(float), data.points.data(), GL_DYNAMIC_DRAW);
+	glBindTexture(GL_TEXTURE_BUFFER, m_hairPointTex);
+	glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, m_hairPointBuffer);
+
+	// Upload per-instance strand lengths
+	glBindBuffer(GL_ARRAY_BUFFER, m_hairInstanceVbo);
+	glBufferData(GL_ARRAY_BUFFER, data.lengths.size() * sizeof(float), data.lengths.data(), GL_DYNAMIC_DRAW);
+
+	// Setup VAO
 	glBindVertexArray(m_hairVao);
-	glBindBuffer(GL_ARRAY_BUFFER, m_hairVbo);
-	glBufferData(GL_ARRAY_BUFFER, data.vertices.size() * sizeof(float), data.vertices.data(), GL_DYNAMIC_DRAW);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_hairEbo);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.indices.size() * sizeof(uint32_t), data.indices.data(), GL_DYNAMIC_DRAW);
+	// Template attributes: seg, end, side
+	glBindBuffer(GL_ARRAY_BUFFER, m_hairTemplateVbo);
+	const int stride = 3 * sizeof(float);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 1, GL_FLOAT, GL_FALSE, stride, (void*)0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, (void*)(1 * sizeof(float)));
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void*)(2 * sizeof(float)));
+	// Instance attribute: length
+	glBindBuffer(GL_ARRAY_BUFFER, m_hairInstanceVbo);
+	glEnableVertexAttribArray(3);
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+	glVertexAttribDivisor(3, 1);
 	glBindVertexArray(0);
 
-	m_hairIndexCount = (int)data.indices.size();
+	m_hairInstanceCount = data.strandCount;
+	m_hairRebuiltThisFrame = true;
+	m_hairRebuildCount++;
+	auto t1 = std::chrono::high_resolution_clock::now();
+	m_hairBuildMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 	m_hairCacheKey = key;
 	m_hairCacheValid = true;
 }
@@ -418,7 +470,7 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 
 	if (rs.showHair && scene.activeModule() == ModuleType::Hair) {
 		uploadHair(scene);
-		if (m_hairIndexCount > 0) {
+		if (m_hairTemplateVertexCount > 0 && m_hairInstanceCount > 0) {
 			GLboolean wasCull = glIsEnabled(GL_CULL_FACE);
 			if (wasCull) glDisable(GL_CULL_FACE);
 
@@ -426,6 +478,10 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 			glUniformMatrix4fv(glGetUniformLocation(m_hairProgram, "uViewProj"), 1, GL_FALSE, glm::value_ptr(camera.viewProj()));
 			glm::vec3 camPos = camera.position();
 			glUniform3fv(glGetUniformLocation(m_hairProgram, "uCamPos"), 1, glm::value_ptr(camPos));
+			glUniform1i(glGetUniformLocation(m_hairProgram, "uStrandSteps"), m_hairSteps);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_BUFFER, m_hairPointTex);
+			glUniform1i(glGetUniformLocation(m_hairProgram, "uStrandPoints"), 0);
 			const HairSettings& hs = scene.hairSettings();
 			glUniform1f(glGetUniformLocation(m_hairProgram, "uRootThickness"), hs.rootThickness);
 			glUniform1f(glGetUniformLocation(m_hairProgram, "uMidThickness"), hs.midThickness);
@@ -435,8 +491,9 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 			glUniform3f(glGetUniformLocation(m_hairProgram, "uHairColor"), 0.90f, 0.80f, 0.65f);
 
 			glBindVertexArray(m_hairVao);
-			glDrawElements(GL_TRIANGLES, m_hairIndexCount, GL_UNSIGNED_INT, nullptr);
+			glDrawArraysInstanced(GL_TRIANGLES, 0, m_hairTemplateVertexCount, m_hairInstanceCount);
 			glBindVertexArray(0);
+			glBindTexture(GL_TEXTURE_BUFFER, 0);
 			glUseProgram(0);
 
 			if (wasCull) glEnable(GL_CULL_FACE);

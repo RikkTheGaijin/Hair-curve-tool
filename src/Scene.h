@@ -50,6 +50,13 @@ struct HairRenderData {
 	std::vector<uint32_t> indices;
 };
 
+struct HairStrandData {
+	std::vector<float> points;  // xyz per point
+	std::vector<float> lengths; // per strand
+	int strandCount = 0;
+	int steps = 0;
+};
+
 struct MaskData {
 	int w = 0;
 	int h = 0;
@@ -99,6 +106,7 @@ public:
 	void clearHairMasks();
 
 	void buildHairRenderData(HairRenderData& out) const;
+	void buildHairStrands(HairStrandData& out) const;
 	int lastHairCount() const { return m_lastHairCount; }
 
 	// Layers
