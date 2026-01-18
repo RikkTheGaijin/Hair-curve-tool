@@ -329,6 +329,8 @@ static uint64_t computeHairCacheKey(const Scene& scene) {
 	h = hashCombine(h, (uint64_t)hs.distribution);
 	h = hashCombine(h, (uint64_t)hs.hairResolution);
 	h = hashCombine(h, hashFloat(hs.smoothness));
+	h = hashCombine(h, (uint64_t)hs.guideInterpolation);
+	h = hashCombine(h, hashFloat(hs.guideInterpolationTightness));
 	h = hashCombine(h, hashFloat(hs.rootThickness));
 	h = hashCombine(h, hashFloat(hs.midThickness));
 	h = hashCombine(h, hashFloat(hs.tipThickness));

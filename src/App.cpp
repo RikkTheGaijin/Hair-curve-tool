@@ -561,6 +561,21 @@ void App::drawSidePanel() {
 		ImGui::Separator();
 		ImGui::SliderInt("Resolution", &hs.hairResolution, 3, 100);
 		ImGui::SliderFloat("Smoothness", &hs.smoothness, 0.0f, 1.0f, "%.2f");
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Guide Interpolation");
+		ImGui::Separator();
+		const char* guideInterpLabels[] = {
+			"No guide interpolation",
+			"Interpolate guides - Affine Interpolation",
+			"Interpolate guides - Baricentric Interpolation"
+		};
+		int guideInterpIdx = (int)hs.guideInterpolation;
+		if (ImGui::Combo("Mode", &guideInterpIdx, guideInterpLabels, IM_ARRAYSIZE(guideInterpLabels))) {
+			hs.guideInterpolation = (GuideInterpolationType)guideInterpIdx;
+		}
+		if (hs.guideInterpolation == GuideInterpolationType::Barycentric) {
+			ImGui::SliderFloat("Tightness", &hs.guideInterpolationTightness, 0.25f, 6.0f, "%.2f");
+		}
 	}
 
 	ImGui::Spacing();

@@ -249,6 +249,48 @@ static bool meshHasNormals(const Mesh& mesh) {
 	return !mesh.normals().empty();
 }
 
+static float computeNearestAvgSigma2(const std::vector<glm::vec2>& pts) {
+	if (pts.size() < 2) return 1e-6f;
+	float sum = 0.0f;
+	int count = 0;
+	for (size_t i = 0; i < pts.size(); i++) {
+		float best = std::numeric_limits<float>::max();
+		for (size_t j = 0; j < pts.size(); j++) {
+			if (i == j) continue;
+			float d = glm::length(pts[i] - pts[j]);
+			if (d < best) best = d;
+		}
+		if (best < std::numeric_limits<float>::max()) {
+			sum += best;
+			count++;
+		}
+	}
+	float avg = (count > 0) ? (sum / (float)count) : 0.0f;
+	float sigma = glm::max(avg * 0.5f, 1e-6f);
+	return sigma * sigma;
+}
+
+static float computeNearestAvgSigma2(const std::vector<glm::vec3>& pts) {
+	if (pts.size() < 2) return 1e-6f;
+	float sum = 0.0f;
+	int count = 0;
+	for (size_t i = 0; i < pts.size(); i++) {
+		float best = std::numeric_limits<float>::max();
+		for (size_t j = 0; j < pts.size(); j++) {
+			if (i == j) continue;
+			float d = glm::length(pts[i] - pts[j]);
+			if (d < best) best = d;
+		}
+		if (best < std::numeric_limits<float>::max()) {
+			sum += best;
+			count++;
+		}
+	}
+	float avg = (count > 0) ? (sum / (float)count) : 0.0f;
+	float sigma = glm::max(avg * 0.5f, 1e-6f);
+	return sigma * sigma;
+}
+
 static HairRootSample sampleTriangle(const Mesh& mesh, int triIndex, float r1, float r2) {
 	HairRootSample s;
 	s.triIndex = triIndex;
@@ -409,6 +451,200 @@ static glm::vec3 sampleCurveAtLengthSmooth(const HairCurve& c, float length, flo
 		remaining -= seg;
 	}
 	return c.points.back();
+}
+
+static bool barycentric3D(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, glm::vec3& outBary) {
+	glm::vec3 v0 = b - a;
+	glm::vec3 v1 = c - a;
+	glm::vec3 v2 = p - a;
+	float d00 = glm::dot(v0, v0);
+	float d01 = glm::dot(v0, v1);
+	float d11 = glm::dot(v1, v1);
+	float d20 = glm::dot(v2, v0);
+	float d21 = glm::dot(v2, v1);
+	float denom = d00 * d11 - d01 * d01;
+	if (glm::abs(denom) < 1e-12f) return false;
+	float v = (d11 * d20 - d01 * d21) / denom;
+	float w = (d00 * d21 - d01 * d20) / denom;
+	float u = 1.0f - v - w;
+	outBary = glm::vec3(u, v, w);
+	return true;
+}
+
+static glm::vec3 normalizeWeights(const glm::vec3& w) {
+	float sum = w.x + w.y + w.z;
+	if (sum <= 1e-6f) return glm::vec3(1.0f, 0.0f, 0.0f);
+	return w / sum;
+}
+
+static glm::vec3 safeNormalize(const glm::vec3& v) {
+	float len = glm::length(v);
+	if (len <= 1e-6f) return glm::vec3(1.0f, 0.0f, 0.0f);
+	return v / len;
+}
+
+static bool computeBestFitPlaneAxes(const std::vector<glm::vec3>& pts, glm::vec3& origin, glm::vec3& axisU, glm::vec3& axisV) {
+	if (pts.size() < 3) return false;
+	origin = glm::vec3(0.0f);
+	for (const auto& p : pts) origin += p;
+	origin /= (float)pts.size();
+
+	glm::mat3 cov(0.0f);
+	for (const auto& p : pts) {
+		glm::vec3 v = p - origin;
+		cov[0][0] += v.x * v.x; cov[0][1] += v.x * v.y; cov[0][2] += v.x * v.z;
+		cov[1][0] += v.y * v.x; cov[1][1] += v.y * v.y; cov[1][2] += v.y * v.z;
+		cov[2][0] += v.z * v.x; cov[2][1] += v.z * v.y; cov[2][2] += v.z * v.z;
+	}
+
+	auto powerIter = [&](const glm::mat3& m, glm::vec3 v) {
+		v = safeNormalize(v);
+		for (int i = 0; i < 12; i++) {
+			v = safeNormalize(m * v);
+		}
+		return v;
+	};
+
+	glm::vec3 e1 = powerIter(cov, glm::vec3(1.0f, 0.3f, 0.2f));
+	float lambda1 = glm::dot(e1, cov * e1);
+	glm::mat3 cov2 = cov - lambda1 * glm::outerProduct(e1, e1);
+	glm::vec3 e2 = powerIter(cov2, glm::vec3(0.1f, 1.0f, 0.2f));
+
+	glm::vec3 n = glm::cross(e1, e2);
+	if (glm::length(n) <= 1e-6f) {
+		e1 = safeNormalize(e1);
+		glm::vec3 helper = (glm::abs(e1.x) < 0.9f) ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0);
+		e2 = safeNormalize(glm::cross(helper, e1));
+	}
+
+	axisU = safeNormalize(e1);
+	glm::vec3 normal = safeNormalize(glm::cross(axisU, e2));
+	axisV = safeNormalize(glm::cross(normal, axisU));
+	return true;
+}
+
+struct DelaunayTri {
+	int a = -1;
+	int b = -1;
+	int c = -1;
+	glm::vec2 center{0.0f};
+	float r2 = 0.0f;
+};
+
+static bool circumcircle2D(const glm::vec2& a, const glm::vec2& b, const glm::vec2& c, glm::vec2& outCenter, float& outR2) {
+	float d = 2.0f * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+	if (glm::abs(d) < 1e-12f) return false;
+	float a2 = a.x * a.x + a.y * a.y;
+	float b2 = b.x * b.x + b.y * b.y;
+	float c2 = c.x * c.x + c.y * c.y;
+	float ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d;
+	float uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
+	outCenter = glm::vec2(ux, uy);
+	outR2 = glm::dot(outCenter - a, outCenter - a);
+	return true;
+}
+
+static std::vector<glm::ivec3> buildDelaunayTriangulation(const std::vector<glm::vec2>& pts) {
+	std::vector<glm::ivec3> result;
+	if (pts.size() < 3) return result;
+
+	glm::vec2 minP = pts[0];
+	glm::vec2 maxP = pts[0];
+	for (const auto& p : pts) {
+		minP = glm::min(minP, p);
+		maxP = glm::max(maxP, p);
+	}
+	glm::vec2 center = (minP + maxP) * 0.5f;
+	float dx = maxP.x - minP.x;
+	float dy = maxP.y - minP.y;
+	float dmax = glm::max(dx, dy);
+	if (dmax <= 1e-6f) return result;
+
+	std::vector<glm::vec2> p = pts;
+	int n = (int)pts.size();
+	p.push_back(center + glm::vec2(0.0f, 2.5f * dmax));
+	p.push_back(center + glm::vec2(-2.5f * dmax, -2.5f * dmax));
+	p.push_back(center + glm::vec2(2.5f * dmax, -2.5f * dmax));
+	int s0 = n;
+	int s1 = n + 1;
+	int s2 = n + 2;
+
+	std::vector<DelaunayTri> tris;
+	DelaunayTri super;
+	super.a = s0; super.b = s1; super.c = s2;
+	if (!circumcircle2D(p[s0], p[s1], p[s2], super.center, super.r2)) return result;
+	tris.push_back(super);
+
+	struct Edge { int a; int b; };
+	for (int i = 0; i < n; i++) {
+		std::vector<int> bad;
+		for (size_t ti = 0; ti < tris.size(); ti++) {
+			glm::vec2 dv = p[i] - tris[ti].center;
+			float d2 = glm::dot(dv, dv);
+			if (d2 <= tris[ti].r2) bad.push_back((int)ti);
+		}
+
+		std::unordered_map<uint64_t, int> edgeCount;
+		std::vector<Edge> edges;
+		auto addEdge = [&](int a, int b) {
+			int lo = glm::min(a, b);
+			int hi = glm::max(a, b);
+			uint64_t key = ((uint64_t)(uint32_t)lo << 32) | (uint32_t)hi;
+			edgeCount[key]++;
+			edges.push_back({a, b});
+		};
+		for (int idx : bad) {
+			DelaunayTri& t = tris[(size_t)idx];
+			addEdge(t.a, t.b);
+			addEdge(t.b, t.c);
+			addEdge(t.c, t.a);
+		}
+		// Remove bad triangles
+		for (int bi = (int)bad.size() - 1; bi >= 0; bi--) {
+			tris.erase(tris.begin() + bad[(size_t)bi]);
+		}
+
+		for (const auto& e : edges) {
+			int lo = glm::min(e.a, e.b);
+			int hi = glm::max(e.a, e.b);
+			uint64_t key = ((uint64_t)(uint32_t)lo << 32) | (uint32_t)hi;
+			if (edgeCount[key] != 1) continue;
+			DelaunayTri nt;
+			nt.a = e.a; nt.b = e.b; nt.c = i;
+			if (!circumcircle2D(p[nt.a], p[nt.b], p[nt.c], nt.center, nt.r2)) continue;
+			tris.push_back(nt);
+		}
+	}
+
+	for (const auto& t : tris) {
+		if (t.a >= n || t.b >= n || t.c >= n) continue;
+		result.push_back(glm::ivec3(t.a, t.b, t.c));
+	}
+	return result;
+}
+
+static std::vector<glm::ivec3> buildDelaunayTriangulationSorted(const std::vector<glm::vec2>& pts) {
+	std::vector<glm::ivec3> result;
+	if (pts.size() < 3) return result;
+
+	std::vector<int> order(pts.size());
+	std::iota(order.begin(), order.end(), 0);
+	std::sort(order.begin(), order.end(), [&](int a, int b) {
+		if (pts[(size_t)a].x != pts[(size_t)b].x) return pts[(size_t)a].x < pts[(size_t)b].x;
+		if (pts[(size_t)a].y != pts[(size_t)b].y) return pts[(size_t)a].y < pts[(size_t)b].y;
+		return a < b;
+	});
+
+	std::vector<glm::vec2> sortedPts;
+	sortedPts.reserve(pts.size());
+	for (int idx : order) sortedPts.push_back(pts[(size_t)idx]);
+
+	std::vector<glm::ivec3> tris = buildDelaunayTriangulation(sortedPts);
+	result.reserve(tris.size());
+	for (const auto& t : tris) {
+		result.push_back(glm::ivec3(order[(size_t)t.x], order[(size_t)t.y], order[(size_t)t.z]));
+	}
+	return result;
 }
 
 static bool loadMaskData(const std::string& path, MaskData& outMask) {
@@ -1075,9 +1311,11 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 	// Build guide lookup
 	std::vector<const HairCurve*> guideCurves;
 	std::vector<glm::vec3> guideRoots;
+	std::vector<glm::vec2> guideRootUvs;
 	std::vector<float> guideLengths;
 	guideCurves.reserve(m_guides.curveCount());
 	guideRoots.reserve(m_guides.curveCount());
+	guideRootUvs.reserve(m_guides.curveCount());
 	guideLengths.reserve(m_guides.curveCount());
 	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
 		const HairCurve& c = m_guides.curve(ci);
@@ -1088,7 +1326,56 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 		if (len <= 1e-6f) continue;
 		guideCurves.push_back(&c);
 		guideRoots.push_back(c.points[0]);
+		glm::vec2 rootUv(0.0f);
+		if (meshHasUvs(mesh) && c.root.triIndex >= 0 && (size_t)c.root.triIndex < triCount) {
+			unsigned int i0 = indices[(size_t)c.root.triIndex * 3u + 0u];
+			unsigned int i1 = indices[(size_t)c.root.triIndex * 3u + 1u];
+			unsigned int i2 = indices[(size_t)c.root.triIndex * 3u + 2u];
+			glm::vec2 uv0 = mesh.uvs()[i0];
+			glm::vec2 uv1 = mesh.uvs()[i1];
+			glm::vec2 uv2 = mesh.uvs()[i2];
+			rootUv = uv0 * c.root.bary.x + uv1 * c.root.bary.y + uv2 * c.root.bary.z;
+		}
+		guideRootUvs.push_back(rootUv);
 		guideLengths.push_back(len);
+	}
+
+	std::vector<glm::vec2> guidePoints2D;
+	std::vector<glm::ivec3> guideTris;
+	float guideTriSigma2 = 0.0f;
+	glm::vec3 planeOrigin(0.0f), axisU(1.0f, 0.0f, 0.0f), axisV(0.0f, 1.0f, 0.0f);
+	if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && guideCurves.size() >= 3) {
+		if (computeBestFitPlaneAxes(guideRoots, planeOrigin, axisU, axisV)) {
+			guidePoints2D.reserve(guideRoots.size());
+			for (const auto& p : guideRoots) {
+				glm::vec3 v = p - planeOrigin;
+				guidePoints2D.push_back(glm::vec2(glm::dot(v, axisU), glm::dot(v, axisV)));
+			}
+		}
+		if (!guidePoints2D.empty()) {
+			guideTris = buildDelaunayTriangulationSorted(guidePoints2D);
+			if (!guideTris.empty()) {
+				float sumEdge = 0.0f;
+				int edgeCount = 0;
+				for (const auto& tri : guideTris) {
+					glm::vec2 a = guidePoints2D[(size_t)tri.x];
+					glm::vec2 b = guidePoints2D[(size_t)tri.y];
+					glm::vec2 c = guidePoints2D[(size_t)tri.z];
+					sumEdge += glm::length(a - b) + glm::length(b - c) + glm::length(c - a);
+					edgeCount += 3;
+				}
+				float avgEdge = (edgeCount > 0) ? (sumEdge / (float)edgeCount) : 0.0f;
+				float sigma = glm::max(avgEdge * 0.5f, 1e-6f);
+				guideTriSigma2 = sigma * sigma;
+			}
+		}
+		if (guideTriSigma2 <= 1e-12f) {
+			if (!guidePoints2D.empty()) {
+				guideTriSigma2 = computeNearestAvgSigma2(guidePoints2D);
+			} else if (!guideRoots.empty()) {
+				guideTriSigma2 = computeNearestAvgSigma2(guideRoots);
+			}
+		}
 	}
 
 	const int steps = glm::clamp(m_hairSettings.hairResolution, 3, 100);
@@ -1102,18 +1389,101 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 		const HairCurve* guide = nullptr;
 		glm::vec3 guideRoot(0.0f);
 		float guideLen = 0.0f;
-		if (!guideCurves.empty()) {
-			float best = std::numeric_limits<float>::max();
+		struct GuideRef { const HairCurve* curve; glm::vec3 root; float len; float dist2; int idx; };
+		GuideRef nearest[3] = {
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1},
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1},
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1}
+		};
+		glm::vec3 interpW(0.0f);
+		std::vector<float> baryWeights;
+		float barySum = 0.0f;
+		bool useInterp = false;
+		bool usedTri = false;
+		if (!guideCurves.empty() && m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric) {
+			glm::vec2 hp(0.0f);
+			bool has2D = false;
+			if (!guidePoints2D.empty()) {
+				glm::vec3 v = r.pos - planeOrigin;
+				hp = glm::vec2(glm::dot(v, axisU), glm::dot(v, axisV));
+				has2D = true;
+			}
+			std::vector<float> weights(guideCurves.size(), 0.0f);
+			float sigma2 = (guideTriSigma2 > 1e-12f) ? guideTriSigma2 : 1e-6f;
+			const float sharpness = glm::clamp(m_hairSettings.guideInterpolationTightness, 0.25f, 8.0f);
 			for (size_t gi = 0; gi < guideCurves.size(); gi++) {
-				float d = glm::length(r.pos - guideRoots[gi]);
-				if (d < best) {
-					best = d;
-					guide = guideCurves[gi];
-					guideRoot = guideRoots[gi];
-					guideLen = guideLengths[gi];
+				float d2 = 0.0f;
+				if (has2D) {
+					glm::vec2 dp = hp - guidePoints2D[gi];
+					d2 = glm::dot(dp, dp);
+				} else {
+					glm::vec3 d = r.pos - guideRoots[gi];
+					d2 = glm::dot(d, d);
+				}
+				float w = std::exp(-d2 / sigma2);
+				weights[gi] = std::pow(w, sharpness);
+			}
+			float sumAll = 0.0f;
+			for (float v : weights) sumAll += v;
+			if (sumAll > 1e-8f) {
+				baryWeights = std::move(weights);
+				barySum = sumAll;
+				useInterp = true;
+				usedTri = true;
+				maxLen = 0.0f;
+				for (size_t i = 0; i < baryWeights.size(); i++) {
+					maxLen += (baryWeights[i] / barySum) * guideLengths[i];
 				}
 			}
-			if (guide) maxLen = guideLen;
+		}
+		if (!guideCurves.empty() && !usedTri) {
+			for (size_t gi = 0; gi < guideCurves.size(); gi++) {
+				float d2 = 0.0f;
+				glm::vec3 d = r.pos - guideRoots[gi];
+				d2 = glm::dot(d, d);
+				for (int k = 0; k < 3; k++) {
+					if (d2 < nearest[k].dist2) {
+						for (int s = 2; s > k; s--) nearest[s] = nearest[s - 1];
+						nearest[k] = { guideCurves[gi], guideRoots[gi], guideLengths[gi], d2, (int)gi };
+						break;
+					}
+				}
+			}
+
+			if (m_hairSettings.guideInterpolation == GuideInterpolationType::None || nearest[1].curve == nullptr) {
+				guide = nearest[0].curve;
+				guideRoot = nearest[0].root;
+				guideLen = nearest[0].len;
+				if (guide) maxLen = guideLen;
+			} else {
+				useInterp = true;
+				if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && nearest[2].curve != nullptr) {
+					glm::vec3 bary;
+					bool inside = false;
+					if (barycentric3D(r.pos, nearest[0].root, nearest[1].root, nearest[2].root, bary)) {
+						inside = (bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f);
+					}
+					if (inside) {
+						interpW = normalizeWeights(bary);
+					} else {
+						float d0 = std::sqrt(nearest[0].dist2) + 1e-6f;
+						float d1 = std::sqrt(nearest[1].dist2) + 1e-6f;
+						float d2 = std::sqrt(nearest[2].dist2) + 1e-6f;
+						interpW = glm::vec3(1.0f / d0, 1.0f / d1, 1.0f / d2);
+					}
+				} else {
+					float d0 = std::sqrt(nearest[0].dist2) + 1e-6f;
+					float d1 = std::sqrt(nearest[1].dist2) + 1e-6f;
+					float d2 = (nearest[2].curve != nullptr) ? (std::sqrt(nearest[2].dist2) + 1e-6f) : 1e9f;
+					interpW = glm::vec3(1.0f / d0, 1.0f / d1, (nearest[2].curve != nullptr) ? (1.0f / d2) : 0.0f);
+				}
+				interpW = normalizeWeights(interpW);
+
+				maxLen = 0.0f;
+				if (nearest[0].curve) maxLen += interpW.x * nearest[0].len;
+				if (nearest[1].curve) maxLen += interpW.y * nearest[1].len;
+				if (nearest[2].curve) maxLen += interpW.z * nearest[2].len;
+			}
 		}
 
 		float hairLen = glm::clamp(lenMask, 0.0f, 1.0f) * maxLen;
@@ -1121,7 +1491,7 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 
 		std::vector<glm::vec3> pts;
 		pts.reserve((size_t)steps);
-		if (guide) {
+		if (guide && !useInterp) {
 			float useLen = glm::min(hairLen, guideLen);
 			glm::vec3 delta = r.pos - guideRoot;
 			for (int si = 0; si < steps; si++) {
@@ -1129,6 +1499,44 @@ void Scene::buildHairRenderData(HairRenderData& out) const {
 				float s = t * useLen;
 				glm::vec3 gp = sampleCurveAtLengthSmooth(*guide, s, m_hairSettings.smoothness);
 				pts.push_back(gp + delta);
+			}
+		} else if (useInterp) {
+			if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && barySum > 0.0f) {
+				for (int si = 0; si < steps; si++) {
+					float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
+					float s = t * hairLen;
+					glm::vec3 p(0.0f);
+					for (size_t i = 0; i < baryWeights.size(); i++) {
+						float w = baryWeights[i] / barySum;
+						if (w <= 0.0f) continue;
+						float useLen = glm::min(s, guideLengths[i]);
+						glm::vec3 gp = sampleCurveAtLengthSmooth(*guideCurves[i], useLen, m_hairSettings.smoothness);
+						p += w * (gp + (r.pos - guideRoots[i]));
+					}
+					pts.push_back(p);
+				}
+			} else {
+				for (int si = 0; si < steps; si++) {
+					float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
+					float s = t * hairLen;
+					glm::vec3 p(0.0f);
+					if (nearest[0].curve) {
+						float useLen0 = glm::min(s, nearest[0].len);
+						glm::vec3 gp0 = sampleCurveAtLengthSmooth(*nearest[0].curve, useLen0, m_hairSettings.smoothness);
+						p += interpW.x * (gp0 + (r.pos - nearest[0].root));
+					}
+					if (nearest[1].curve) {
+						float useLen1 = glm::min(s, nearest[1].len);
+						glm::vec3 gp1 = sampleCurveAtLengthSmooth(*nearest[1].curve, useLen1, m_hairSettings.smoothness);
+						p += interpW.y * (gp1 + (r.pos - nearest[1].root));
+					}
+					if (nearest[2].curve) {
+						float useLen2 = glm::min(s, nearest[2].len);
+						glm::vec3 gp2 = sampleCurveAtLengthSmooth(*nearest[2].curve, useLen2, m_hairSettings.smoothness);
+						p += interpW.z * (gp2 + (r.pos - nearest[2].root));
+					}
+					pts.push_back(p);
+				}
 			}
 		} else {
 			for (int si = 0; si < steps; si++) {
@@ -1444,9 +1852,11 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 	// Build guide lookup
 	std::vector<const HairCurve*> guideCurves;
 	std::vector<glm::vec3> guideRoots;
+	std::vector<glm::vec2> guideRootUvs;
 	std::vector<float> guideLengths;
 	guideCurves.reserve(m_guides.curveCount());
 	guideRoots.reserve(m_guides.curveCount());
+	guideRootUvs.reserve(m_guides.curveCount());
 	guideLengths.reserve(m_guides.curveCount());
 	for (size_t ci = 0; ci < m_guides.curveCount(); ci++) {
 		const HairCurve& c = m_guides.curve(ci);
@@ -1457,7 +1867,56 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 		if (len <= 1e-6f) continue;
 		guideCurves.push_back(&c);
 		guideRoots.push_back(c.points[0]);
+		glm::vec2 rootUv(0.0f);
+		if (meshHasUvs(mesh) && c.root.triIndex >= 0 && (size_t)c.root.triIndex < triCount) {
+			unsigned int i0 = indices[(size_t)c.root.triIndex * 3u + 0u];
+			unsigned int i1 = indices[(size_t)c.root.triIndex * 3u + 1u];
+			unsigned int i2 = indices[(size_t)c.root.triIndex * 3u + 2u];
+			glm::vec2 uv0 = mesh.uvs()[i0];
+			glm::vec2 uv1 = mesh.uvs()[i1];
+			glm::vec2 uv2 = mesh.uvs()[i2];
+			rootUv = uv0 * c.root.bary.x + uv1 * c.root.bary.y + uv2 * c.root.bary.z;
+		}
+		guideRootUvs.push_back(rootUv);
 		guideLengths.push_back(len);
+	}
+
+	std::vector<glm::vec2> guidePoints2D;
+	std::vector<glm::ivec3> guideTris;
+	float guideTriSigma2 = 0.0f;
+	glm::vec3 planeOrigin(0.0f), axisU(1.0f, 0.0f, 0.0f), axisV(0.0f, 1.0f, 0.0f);
+	if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && guideCurves.size() >= 3) {
+		if (computeBestFitPlaneAxes(guideRoots, planeOrigin, axisU, axisV)) {
+			guidePoints2D.reserve(guideRoots.size());
+			for (const auto& p : guideRoots) {
+				glm::vec3 v = p - planeOrigin;
+				guidePoints2D.push_back(glm::vec2(glm::dot(v, axisU), glm::dot(v, axisV)));
+			}
+		}
+		if (!guidePoints2D.empty()) {
+			guideTris = buildDelaunayTriangulationSorted(guidePoints2D);
+			if (!guideTris.empty()) {
+				float sumEdge = 0.0f;
+				int edgeCount = 0;
+				for (const auto& tri : guideTris) {
+					glm::vec2 a = guidePoints2D[(size_t)tri.x];
+					glm::vec2 b = guidePoints2D[(size_t)tri.y];
+					glm::vec2 c = guidePoints2D[(size_t)tri.z];
+					sumEdge += glm::length(a - b) + glm::length(b - c) + glm::length(c - a);
+					edgeCount += 3;
+				}
+				float avgEdge = (edgeCount > 0) ? (sumEdge / (float)edgeCount) : 0.0f;
+				float sigma = glm::max(avgEdge * 0.5f, 1e-6f);
+				guideTriSigma2 = sigma * sigma;
+			}
+		}
+		if (guideTriSigma2 <= 1e-12f) {
+			if (!guidePoints2D.empty()) {
+				guideTriSigma2 = computeNearestAvgSigma2(guidePoints2D);
+			} else if (!guideRoots.empty()) {
+				guideTriSigma2 = computeNearestAvgSigma2(guideRoots);
+			}
+		}
 	}
 
 	const int steps = glm::clamp(m_hairSettings.hairResolution, 3, 100);
@@ -1475,18 +1934,101 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 		const HairCurve* guide = nullptr;
 		glm::vec3 guideRoot(0.0f);
 		float guideLen = 0.0f;
-		if (!guideCurves.empty()) {
-			float best = std::numeric_limits<float>::max();
+		struct GuideRef { const HairCurve* curve; glm::vec3 root; float len; float dist2; int idx; };
+		GuideRef nearest[3] = {
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1},
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1},
+			{nullptr, glm::vec3(0.0f), 0.0f, std::numeric_limits<float>::max(), -1}
+		};
+		glm::vec3 interpW(0.0f);
+		std::vector<float> baryWeights;
+		float barySum = 0.0f;
+		bool useInterp = false;
+		bool usedTri = false;
+		if (!guideCurves.empty() && m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric) {
+			glm::vec2 hp(0.0f);
+			bool has2D = false;
+			if (!guidePoints2D.empty()) {
+				glm::vec3 v = r.pos - planeOrigin;
+				hp = glm::vec2(glm::dot(v, axisU), glm::dot(v, axisV));
+				has2D = true;
+			}
+			std::vector<float> weights(guideCurves.size(), 0.0f);
+			float sigma2 = (guideTriSigma2 > 1e-12f) ? guideTriSigma2 : 1e-6f;
+			const float sharpness = glm::clamp(m_hairSettings.guideInterpolationTightness, 0.25f, 8.0f);
 			for (size_t gi = 0; gi < guideCurves.size(); gi++) {
-				float d = glm::length(r.pos - guideRoots[gi]);
-				if (d < best) {
-					best = d;
-					guide = guideCurves[gi];
-					guideRoot = guideRoots[gi];
-					guideLen = guideLengths[gi];
+				float d2 = 0.0f;
+				if (has2D) {
+					glm::vec2 dp = hp - guidePoints2D[gi];
+					d2 = glm::dot(dp, dp);
+				} else {
+					glm::vec3 d = r.pos - guideRoots[gi];
+					d2 = glm::dot(d, d);
+				}
+				float w = std::exp(-d2 / sigma2);
+				weights[gi] = std::pow(w, sharpness);
+			}
+			float sumAll = 0.0f;
+			for (float v : weights) sumAll += v;
+			if (sumAll > 1e-8f) {
+				baryWeights = std::move(weights);
+				barySum = sumAll;
+				useInterp = true;
+				usedTri = true;
+				maxLen = 0.0f;
+				for (size_t i = 0; i < baryWeights.size(); i++) {
+					maxLen += (baryWeights[i] / barySum) * guideLengths[i];
 				}
 			}
-			if (guide) maxLen = guideLen;
+		}
+		if (!guideCurves.empty() && !usedTri) {
+			for (size_t gi = 0; gi < guideCurves.size(); gi++) {
+				float d2 = 0.0f;
+				glm::vec3 d = r.pos - guideRoots[gi];
+				d2 = glm::dot(d, d);
+				for (int k = 0; k < 3; k++) {
+					if (d2 < nearest[k].dist2) {
+						for (int s = 2; s > k; s--) nearest[s] = nearest[s - 1];
+						nearest[k] = { guideCurves[gi], guideRoots[gi], guideLengths[gi], d2, (int)gi };
+						break;
+					}
+				}
+			}
+
+			if (m_hairSettings.guideInterpolation == GuideInterpolationType::None || nearest[1].curve == nullptr) {
+				guide = nearest[0].curve;
+				guideRoot = nearest[0].root;
+				guideLen = nearest[0].len;
+				if (guide) maxLen = guideLen;
+			} else {
+				useInterp = true;
+				if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && nearest[2].curve != nullptr) {
+					glm::vec3 bary;
+					bool inside = false;
+					if (barycentric3D(r.pos, nearest[0].root, nearest[1].root, nearest[2].root, bary)) {
+						inside = (bary.x >= 0.0f && bary.y >= 0.0f && bary.z >= 0.0f);
+					}
+					if (inside) {
+						interpW = normalizeWeights(bary);
+					} else {
+						float d0 = std::sqrt(nearest[0].dist2) + 1e-6f;
+						float d1 = std::sqrt(nearest[1].dist2) + 1e-6f;
+						float d2 = std::sqrt(nearest[2].dist2) + 1e-6f;
+						interpW = glm::vec3(1.0f / d0, 1.0f / d1, 1.0f / d2);
+					}
+				} else {
+					float d0 = std::sqrt(nearest[0].dist2) + 1e-6f;
+					float d1 = std::sqrt(nearest[1].dist2) + 1e-6f;
+					float d2 = (nearest[2].curve != nullptr) ? (std::sqrt(nearest[2].dist2) + 1e-6f) : 1e9f;
+					interpW = glm::vec3(1.0f / d0, 1.0f / d1, (nearest[2].curve != nullptr) ? (1.0f / d2) : 0.0f);
+				}
+				interpW = normalizeWeights(interpW);
+
+				maxLen = 0.0f;
+				if (nearest[0].curve) maxLen += interpW.x * nearest[0].len;
+				if (nearest[1].curve) maxLen += interpW.y * nearest[1].len;
+				if (nearest[2].curve) maxLen += interpW.z * nearest[2].len;
+			}
 		}
 
 		float hairLen = glm::clamp(lenMask, 0.0f, 1.0f) * maxLen;
@@ -1502,7 +2044,7 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 
 		std::vector<glm::vec3> pts;
 		pts.reserve((size_t)steps);
-		if (guide) {
+		if (guide && !useInterp) {
 			float useLen = glm::min(hairLen, guideLen);
 			glm::vec3 delta = r.pos - guideRoot;
 			for (int si = 0; si < steps; si++) {
@@ -1510,6 +2052,44 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 				float s = t * useLen;
 				glm::vec3 gp = sampleCurveAtLengthSmooth(*guide, s, m_hairSettings.smoothness);
 				pts.push_back(gp + delta);
+			}
+		} else if (useInterp) {
+			if (m_hairSettings.guideInterpolation == GuideInterpolationType::Barycentric && barySum > 0.0f) {
+				for (int si = 0; si < steps; si++) {
+					float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
+					float s = t * hairLen;
+					glm::vec3 p(0.0f);
+					for (size_t i = 0; i < baryWeights.size(); i++) {
+						float w = baryWeights[i] / barySum;
+						if (w <= 0.0f) continue;
+						float useLen = glm::min(s, guideLengths[i]);
+						glm::vec3 gp = sampleCurveAtLengthSmooth(*guideCurves[i], useLen, m_hairSettings.smoothness);
+						p += w * (gp + (r.pos - guideRoots[i]));
+					}
+					pts.push_back(p);
+				}
+			} else {
+				for (int si = 0; si < steps; si++) {
+					float t = (steps <= 1) ? 0.0f : (float)si / (float)(steps - 1);
+					float s = t * hairLen;
+					glm::vec3 p(0.0f);
+					if (nearest[0].curve) {
+						float useLen0 = glm::min(s, nearest[0].len);
+						glm::vec3 gp0 = sampleCurveAtLengthSmooth(*nearest[0].curve, useLen0, m_hairSettings.smoothness);
+						p += interpW.x * (gp0 + (r.pos - nearest[0].root));
+					}
+					if (nearest[1].curve) {
+						float useLen1 = glm::min(s, nearest[1].len);
+						glm::vec3 gp1 = sampleCurveAtLengthSmooth(*nearest[1].curve, useLen1, m_hairSettings.smoothness);
+						p += interpW.y * (gp1 + (r.pos - nearest[1].root));
+					}
+					if (nearest[2].curve) {
+						float useLen2 = glm::min(s, nearest[2].len);
+						glm::vec3 gp2 = sampleCurveAtLengthSmooth(*nearest[2].curve, useLen2, m_hairSettings.smoothness);
+						p += interpW.z * (gp2 + (r.pos - nearest[2].root));
+					}
+					pts.push_back(p);
+				}
 			}
 		} else {
 			for (int si = 0; si < steps; si++) {

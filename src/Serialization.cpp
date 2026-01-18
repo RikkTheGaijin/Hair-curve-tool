@@ -63,6 +63,8 @@ bool Serialization::saveScene(const Scene& scene, const Camera& camera, const st
 	jhs["distribution"] = (int)hs.distribution;
 	jhs["hairResolution"] = hs.hairResolution;
 	jhs["smoothness"] = hs.smoothness;
+	jhs["guideInterpolation"] = (int)hs.guideInterpolation;
+	jhs["guideInterpolationTightness"] = hs.guideInterpolationTightness;
 	jhs["rootThickness"] = hs.rootThickness;
 	jhs["midThickness"] = hs.midThickness;
 	jhs["tipThickness"] = hs.tipThickness;
@@ -182,6 +184,8 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 		hs.distribution = (HairDistributionType)jhs.get("distribution", (int)hs.distribution).asInt();
 		hs.hairResolution = jhs.get("hairResolution", hs.hairResolution).asInt();
 		hs.smoothness = jhs.get("smoothness", hs.smoothness).asFloat();
+		hs.guideInterpolation = (GuideInterpolationType)jhs.get("guideInterpolation", (int)hs.guideInterpolation).asInt();
+		hs.guideInterpolationTightness = jhs.get("guideInterpolationTightness", hs.guideInterpolationTightness).asFloat();
 		hs.rootThickness = jhs.get("rootThickness", hs.rootThickness).asFloat();
 		hs.midThickness = jhs.get("midThickness", hs.midThickness).asFloat();
 		hs.tipThickness = jhs.get("tipThickness", hs.tipThickness).asFloat();
