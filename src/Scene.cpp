@@ -1232,7 +1232,23 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 			attempts++;
 		}
 	} else if (m_hairSettings.distribution == HairDistributionType::Even) {
-		const float cellSize = spacing;
+		// Even distribution: fast grid-based accept from a candidate set.
+		const int candidateCount = glm::max(targetCount * 2, 4000);
+		std::vector<HairRootSample> candidates;
+		candidates.reserve((size_t)candidateCount);
+		for (int i = 0; i < candidateCount; i++) {
+			HairRootSample s = sampleRandomRoot();
+			float mask = sampleMaskValue(m_distMask, s.uv);
+			if (mask <= 0.0f) continue;
+			uint32_t h = (uint32_t)(i * 2654435761u);
+			h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
+			float mv = (float)(h & 0x00FFFFFFu) / (float)0x01000000u;
+			if (mv > mask) continue;
+			candidates.push_back(s);
+		}
+		if (candidates.empty()) return;
+
+		float cellSize = spacing;
 		if (cellSize <= 1e-6f) return;
 		struct CellKey { int x = 0, y = 0, z = 0; };
 		auto hashCell = [](int x, int y, int z) -> uint64_t {
@@ -1246,6 +1262,7 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 		auto cellOf = [&](const glm::vec3& p) -> CellKey {
 			return CellKey{ (int)std::floor(p.x / cellSize), (int)std::floor(p.y / cellSize), (int)std::floor(p.z / cellSize) };
 		};
+		float spacing2 = cellSize * cellSize;
 		auto canPlace = [&](const glm::vec3& p) -> bool {
 			CellKey c = cellOf(p);
 			for (int dz = -1; dz <= 1; dz++) {
@@ -1255,8 +1272,8 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 						auto it = grid.find(h);
 						if (it == grid.end()) continue;
 						for (int idx : it->second) {
-							float d = glm::length(p - roots[(size_t)idx].pos);
-							if (d < spacing) return false;
+							glm::vec3 d = p - roots[(size_t)idx].pos;
+							if (glm::dot(d, d) < spacing2) return false;
 						}
 					}
 				}
@@ -1269,17 +1286,33 @@ void Scene::buildHairStrands(HairStrandData& out) const {
 			grid[h].push_back(idx);
 		};
 
-		int attempts = 0;
-		int maxEvenAttempts = glm::max(targetCount * 20, 2000);
-		while ((int)roots.size() < targetCount && attempts < maxEvenAttempts) {
-			HairRootSample s = sampleRandomRoot();
-			float mask = sampleMaskValue(m_distMask, s.uv);
-			if (mask <= 0.0f) { attempts++; continue; }
-			if (dist01(rng) > mask) { attempts++; continue; }
-			if (!canPlace(s.pos)) { attempts++; continue; }
+		// Shuffle candidate order for better spread
+		std::vector<int> order(candidates.size());
+		std::iota(order.begin(), order.end(), 0);
+		std::shuffle(order.begin(), order.end(), rng);
+
+		roots.reserve((size_t)targetCount);
+		for (int idx : order) {
+			if ((int)roots.size() >= targetCount) break;
+			const auto& s = candidates[(size_t)idx];
+			if (!canPlace(s.pos)) continue;
 			roots.push_back(s);
 			addToGrid((int)roots.size() - 1);
-			attempts++;
+		}
+
+		// If still below target, relax spacing and do a second pass.
+		if ((int)roots.size() < targetCount) {
+			cellSize *= 0.75f;
+			spacing2 = cellSize * cellSize;
+			grid.clear();
+			for (size_t i = 0; i < roots.size(); i++) addToGrid((int)i);
+			for (int idx : order) {
+				if ((int)roots.size() >= targetCount) break;
+				const auto& s = candidates[(size_t)idx];
+				if (!canPlace(s.pos)) continue;
+				roots.push_back(s);
+				addToGrid((int)roots.size() - 1);
+			}
 		}
 	} else {
 		// Uniform distribution: build an even quad grid in UV space and map to surface.

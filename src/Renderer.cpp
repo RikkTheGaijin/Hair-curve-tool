@@ -84,6 +84,8 @@ out vec4 oColor;
 void main(){ oColor = vCol; }
 )";
 
+static const int kHairSubdiv = 8;
+
 static const char* kHairVs = R"(
 #version 330 core
 layout(location=0) in float aSeg;
@@ -95,6 +97,7 @@ uniform mat4 uViewProj;
 uniform vec3 uCamPos;
 uniform samplerBuffer uStrandPoints;
 uniform int uStrandSteps;
+uniform int uStrandSubdiv;
 
 uniform float uRootThickness;
 uniform float uMidThickness;
@@ -118,18 +121,32 @@ void main(){
 	float rootExt = max(uRootExtent, 0.0);
 	float tipExt = max(uTipExtent, 0.0);
 	float len = max(aLen, 0.0001);
-	float s = (float(seg) + aEnd) * (len / max(float(uStrandSteps - 1), 1.0));
+	float segLen = len / max(float(uStrandSteps - 1), 1.0);
+	float s = (float(seg) + aEnd) * segLen;
+	float minExt = segLen / max(float(uStrandSubdiv), 1.0);
+	rootExt = min(rootExt, len);
+	tipExt = min(tipExt, len);
+	if (rootExt <= 0.0) rootExt = minExt;
+	if (tipExt <= 0.0) tipExt = minExt;
+
 	float width = uMidThickness;
 	if (rootExt > 1e-6) {
-		float rt = clamp(s / rootExt, 0.0, 1.0);
-		width = mix(uRootThickness, uMidThickness, rt);
+		if (s <= rootExt) {
+			float rt = clamp(s / rootExt, 0.0, 1.0);
+			width = mix(uRootThickness, uMidThickness, rt);
+		}
+	} else {
+		if (s <= 1e-6) width = uRootThickness;
 	}
+
 	if (tipExt > 1e-6) {
 		float tipStart = max(len - tipExt, 0.0);
 		if (s >= tipStart) {
 			float tt = clamp((s - tipStart) / tipExt, 0.0, 1.0);
 			width = mix(uMidThickness, uTipThickness, tt);
 		}
+	} else {
+		if (s >= len - 1e-6) width = uTipThickness;
 	}
 
 	vec3 pos = p + side * (width * aSide);
@@ -348,22 +365,27 @@ void Renderer::uploadHair(const Scene& scene) {
 		m_hairSteps = data.steps;
 		std::vector<float> tpl;
 		int segCount = glm::max(1, m_hairSteps - 1);
-		tpl.reserve((size_t)segCount * 6u * 3u);
+		const int subdiv = glm::max(1, kHairSubdiv);
+		tpl.reserve((size_t)segCount * (size_t)subdiv * 6u * 3u);
 		for (int s = 0; s < segCount; s++) {
 			float seg = (float)s;
-			// Two triangles (6 vertices) for quad
-			float v[6][3] = {
-				{seg, 0.0f, -1.0f},
-				{seg, 0.0f,  1.0f},
-				{seg, 1.0f, -1.0f},
-				{seg, 1.0f, -1.0f},
-				{seg, 0.0f,  1.0f},
-				{seg, 1.0f,  1.0f}
-			};
-			for (int i = 0; i < 6; i++) {
-				tpl.push_back(v[i][0]);
-				tpl.push_back(v[i][1]);
-				tpl.push_back(v[i][2]);
+			for (int sub = 0; sub < subdiv; sub++) {
+				float subT0 = (float)sub / (float)subdiv;
+				float subT1 = (float)(sub + 1) / (float)subdiv;
+				// Two triangles (6 vertices) for quad
+				float v[6][3] = {
+					{seg, subT0, -1.0f},
+					{seg, subT0,  1.0f},
+					{seg, subT1, -1.0f},
+					{seg, subT1, -1.0f},
+					{seg, subT0,  1.0f},
+					{seg, subT1,  1.0f}
+				};
+				for (int i = 0; i < 6; i++) {
+					tpl.push_back(v[i][0]);
+					tpl.push_back(v[i][1]);
+					tpl.push_back(v[i][2]);
+				}
 			}
 		}
 
@@ -479,6 +501,7 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 			glm::vec3 camPos = camera.position();
 			glUniform3fv(glGetUniformLocation(m_hairProgram, "uCamPos"), 1, glm::value_ptr(camPos));
 			glUniform1i(glGetUniformLocation(m_hairProgram, "uStrandSteps"), m_hairSteps);
+			glUniform1i(glGetUniformLocation(m_hairProgram, "uStrandSubdiv"), kHairSubdiv);
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_BUFFER, m_hairPointTex);
 			glUniform1i(glGetUniformLocation(m_hairProgram, "uStrandPoints"), 0);
