@@ -23,9 +23,10 @@ static glm::vec3 jsonToVec3(const Json::Value& a) {
 
 bool Serialization::saveScene(const Scene& scene, const Camera& camera, const std::string& path) {
 	Json::Value root;
-	root["version"] = 2;
+	root["version"] = 3;
 	root["meshPath"] = scene.meshPath();
 	root["meshTexturePath"] = scene.meshTexturePath();
+	root["activeModule"] = (int)scene.activeModule();
 
 	// Camera
 	{
@@ -54,6 +55,20 @@ bool Serialization::saveScene(const Scene& scene, const Camera& camera, const st
 	jgs["stiffness"] = gs.stiffness;
 	jgs["dragLerp"] = gs.dragLerp;
 	root["guideSettings"] = jgs;
+
+	// Hair settings
+	const HairSettings& hs = scene.hairSettings();
+	Json::Value jhs;
+	jhs["hairCount"] = hs.hairCount;
+	jhs["distribution"] = (int)hs.distribution;
+	jhs["rootThickness"] = hs.rootThickness;
+	jhs["midThickness"] = hs.midThickness;
+	jhs["tipThickness"] = hs.tipThickness;
+	jhs["rootExtent"] = hs.rootExtent;
+	jhs["tipExtent"] = hs.tipExtent;
+	jhs["distributionMaskPath"] = hs.distributionMaskPath;
+	jhs["lengthMaskPath"] = hs.lengthMaskPath;
+	root["hairSettings"] = jhs;
 
 	// Layers
 	Json::Value layers(Json::arrayValue);
@@ -148,6 +163,38 @@ bool Serialization::loadScene(Scene& scene, Camera* camera, const std::string& p
 		gs.damping = jgs.get("damping", gs.damping).asFloat();
 		gs.stiffness = jgs.get("stiffness", gs.stiffness).asFloat();
 		gs.dragLerp = jgs.get("dragLerp", gs.dragLerp).asFloat();
+	}
+
+	// Active module
+	int activeModule = root.get("activeModule", (int)scene.activeModule()).asInt();
+	if (activeModule < 0 || activeModule > (int)ModuleType::Hair) {
+		activeModule = (int)ModuleType::Curves;
+	}
+	scene.setActiveModule((ModuleType)activeModule);
+
+	// Hair settings
+	HairSettings& hs = scene.hairSettings();
+	Json::Value jhs = root["hairSettings"];
+	if (jhs.isObject()) {
+		hs.hairCount = jhs.get("hairCount", hs.hairCount).asInt();
+		hs.distribution = (HairDistributionType)jhs.get("distribution", (int)hs.distribution).asInt();
+		hs.rootThickness = jhs.get("rootThickness", hs.rootThickness).asFloat();
+		hs.midThickness = jhs.get("midThickness", hs.midThickness).asFloat();
+		hs.tipThickness = jhs.get("tipThickness", hs.tipThickness).asFloat();
+		hs.rootExtent = jhs.get("rootExtent", hs.rootExtent).asFloat();
+		hs.tipExtent = jhs.get("tipExtent", hs.tipExtent).asFloat();
+		std::string distPath = jhs.get("distributionMaskPath", hs.distributionMaskPath).asString();
+		std::string lenPath = jhs.get("lengthMaskPath", hs.lengthMaskPath).asString();
+		if (!distPath.empty()) {
+			scene.loadHairDistributionMask(distPath);
+		} else {
+			scene.loadHairDistributionMask("");
+		}
+		if (!lenPath.empty()) {
+			scene.loadHairLengthMask(lenPath);
+		} else {
+			scene.loadHairLengthMask("");
+		}
 	}
 
 	// Layers

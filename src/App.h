@@ -4,6 +4,8 @@
 #include <memory>
 #include <array>
 
+#include <imgui.h>
+
 struct GLFWwindow;
 
 class Renderer;
@@ -80,4 +82,7 @@ private:
 
 	int m_layerRenameId = -1;
 	std::array<char, 64> m_layerRenameBuffer{};
+
+	bool m_styleCaptured = false;
+	std::array<ImVec4, ImGuiCol_COUNT> m_styleBaseColors{};
 };

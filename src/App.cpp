@@ -35,6 +35,17 @@ static void glfwErrorCallback(int error, const char* description) {
 	std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+static ImVec4 shiftHue(const ImVec4& c, float hueShift) {
+	float h, s, v;
+	ImGui::ColorConvertRGBtoHSV(c.x, c.y, c.z, h, s, v);
+	h += hueShift;
+	if (h < 0.0f) h += 1.0f;
+	if (h > 1.0f) h -= 1.0f;
+	float r, g, b;
+	ImGui::ColorConvertHSVtoRGB(h, s, v, r, g, b);
+	return ImVec4(r, g, b, c.w);
+}
+
 bool App::init() {
 	m_scene = std::make_unique<Scene>();
 	m_camera = std::make_unique<MayaCameraController>();
@@ -67,6 +78,9 @@ bool App::initWindow() {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	int samples = 0;
+	if (m_scene) samples = glm::clamp(m_scene->renderSettings().msaaSamples, 0, 8);
+	if (samples > 0) glfwWindowHint(GLFW_SAMPLES, samples);
 
 #ifdef _DEBUG
 	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -105,6 +119,7 @@ bool App::initGL() {
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);
 	glFrontFace(GL_CCW);
+	glEnable(GL_MULTISAMPLE);
 
 	return true;
 }
@@ -124,6 +139,12 @@ bool App::initImGui() {
 	style.WindowRounding = 6.0f;
 	style.FrameRounding = 4.0f;
 	style.GrabRounding = 4.0f;
+	if (!m_styleCaptured) {
+		for (int i = 0; i < ImGuiCol_COUNT; i++) {
+			m_styleBaseColors[(size_t)i] = style.Colors[i];
+		}
+		m_styleCaptured = true;
+	}
 
 	if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true)) return false;
 	if (!ImGui_ImplOpenGL3_Init("#version 330")) return false;
@@ -240,6 +261,16 @@ void App::beginFrame() {
 		style.ScaleAllSizes(m_uiScale / m_uiScaleApplied);
 		m_uiScaleApplied = m_uiScale;
 	}
+
+	// Apply module-specific color theme (hair module shifts hue toward red).
+	if (m_styleCaptured && m_scene) {
+		ImGuiStyle& style = ImGui::GetStyle();
+		const bool hairModule = (m_scene->activeModule() == ModuleType::Hair);
+		const float hueShift = hairModule ? (150.0f / 360.0f) : 0.0f;
+		for (int i = 0; i < ImGuiCol_COUNT; i++) {
+			style.Colors[i] = (hueShift != 0.0f) ? shiftHue(m_styleBaseColors[(size_t)i], hueShift) : m_styleBaseColors[(size_t)i];
+		}
+	}
 }
 
 void App::endFrame() {
@@ -271,6 +302,15 @@ void App::drawMenuBar() {
 				if (ImGui::MenuItem("2.0x", nullptr, s2)) m_uiScale = 2.0f;
 				ImGui::EndMenu();
 			}
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Modules")) {
+			ModuleType active = m_scene->activeModule();
+			bool curves = (active == ModuleType::Curves);
+			bool hair = (active == ModuleType::Hair);
+			if (ImGui::MenuItem("Curves", nullptr, curves)) m_scene->setActiveModule(ModuleType::Curves);
+			if (ImGui::MenuItem("Hair", nullptr, hair)) m_scene->setActiveModule(ModuleType::Hair);
 			ImGui::EndMenu();
 		}
 		ImGui::EndMainMenuBar();
@@ -322,7 +362,11 @@ void App::drawGuideCounterOverlay() {
 		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
 		ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
 	if (ImGui::Begin("##GuideCounter", nullptr, flags)) {
-		ImGui::Text("Guides: %d", m_cachedGuideCount);
+		if (m_scene->activeModule() == ModuleType::Hair) {
+			ImGui::Text("Hair: %d", m_scene->lastHairCount());
+		} else {
+			ImGui::Text("Guides: %d", m_cachedGuideCount);
+		}
 	}
 	ImGui::End();
 }
@@ -373,85 +417,142 @@ void App::drawSidePanel() {
 	ImGui::SameLine();
 	if (ImGui::Button("Reset Settings")) resetSettingsToDefaults();
 
-	ImGui::Spacing();
-	ImGui::TextUnformatted("Guide Settings");
-	ImGui::Separator();
+	if (m_scene->activeModule() == ModuleType::Curves) {
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Guide Settings");
+		ImGui::Separator();
 
-	GuideSettings& gs = m_scene->guideSettings();
+		GuideSettings& gs = m_scene->guideSettings();
 
-	// If a curve (or curves) are selected, drive the Length/Steps UI from the selection.
-	// If multiple curves have different values, indicate it as "mixed".
-	{
-		std::vector<int> sel = m_scene->guides().selectedCurves();
-		uint64_t sig = 1469598103934665603ull; // FNV-1a 64-bit basis
-		for (int idx : sel) {
-			sig ^= (uint64_t)(idx + 1);
-			sig *= 1099511628211ull;
-		}
-
-		m_selectedLengthMixed = false;
-		m_selectedStepsMixed = false;
-
-		if (!sel.empty()) {
-			const HairCurve& c0 = m_scene->guides().curve((size_t)sel[0]);
-			float baseLen = (c0.points.size() >= 2) ? (c0.segmentRestLen * (float)(c0.points.size() - 1)) : gs.defaultLength;
-			int baseSteps = (int)c0.points.size();
-
-			for (size_t i = 1; i < sel.size(); i++) {
-				const HairCurve& ci = m_scene->guides().curve((size_t)sel[i]);
-				float li = (ci.points.size() >= 2) ? (ci.segmentRestLen * (float)(ci.points.size() - 1)) : baseLen;
-				int si = (int)ci.points.size();
-				if (glm::abs(li - baseLen) > 1e-6f) m_selectedLengthMixed = true;
-				if (si != baseSteps) m_selectedStepsMixed = true;
-				if (m_selectedLengthMixed && m_selectedStepsMixed) break;
+		// If a curve (or curves) are selected, drive the Length/Steps UI from the selection.
+		// If multiple curves have different values, indicate it as "mixed".
+		{
+			std::vector<int> sel = m_scene->guides().selectedCurves();
+			uint64_t sig = 1469598103934665603ull; // FNV-1a 64-bit basis
+			for (int idx : sel) {
+				sig ^= (uint64_t)(idx + 1);
+				sig *= 1099511628211ull;
 			}
 
-			// Only snap the sliders to the selection when the selection changes,
-			// so we don't fight the user's ongoing slider interaction.
-			if (sig != m_selectedCurvesSignature) {
+			m_selectedLengthMixed = false;
+			m_selectedStepsMixed = false;
+
+			if (!sel.empty()) {
+				const HairCurve& c0 = m_scene->guides().curve((size_t)sel[0]);
+				float baseLen = (c0.points.size() >= 2) ? (c0.segmentRestLen * (float)(c0.points.size() - 1)) : gs.defaultLength;
+				int baseSteps = (int)c0.points.size();
+
+				for (size_t i = 1; i < sel.size(); i++) {
+					const HairCurve& ci = m_scene->guides().curve((size_t)sel[i]);
+					float li = (ci.points.size() >= 2) ? (ci.segmentRestLen * (float)(ci.points.size() - 1)) : baseLen;
+					int si = (int)ci.points.size();
+					if (glm::abs(li - baseLen) > 1e-6f) m_selectedLengthMixed = true;
+					if (si != baseSteps) m_selectedStepsMixed = true;
+					if (m_selectedLengthMixed && m_selectedStepsMixed) break;
+				}
+
+				// Only snap the sliders to the selection when the selection changes,
+				// so we don't fight the user's ongoing slider interaction.
+				if (sig != m_selectedCurvesSignature) {
+					m_selectedCurvesSignature = sig;
+					gs.defaultLength = baseLen;
+					gs.defaultSteps = baseSteps;
+				}
+			} else {
 				m_selectedCurvesSignature = sig;
-				gs.defaultLength = baseLen;
-				gs.defaultSteps = baseSteps;
 			}
-		} else {
-			m_selectedCurvesSignature = sig;
 		}
-	}
 
-	bool lengthChanged = ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
-	if (m_selectedLengthMixed) {
+		bool lengthChanged = ImGui::SliderFloat("Length", &gs.defaultLength, 0.01f, 2.0f, "%.3f m");
+		if (m_selectedLengthMixed) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("(mixed)");
+		}
+		bool stepsChanged = ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
+		if (m_selectedStepsMixed) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("(mixed)");
+		}
+		ImGui::Checkbox("Mirror mode", &gs.mirrorMode);
+		if (lengthChanged || stepsChanged) {
+			m_scene->guides().applyLengthStepsToSelected(gs.defaultLength, gs.defaultSteps);
+		}
+		
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Simulation");
+		ImGui::Separator();
+		ImGui::Checkbox("Enable Physics Simulation", &gs.enableSimulation);
+		// GPU solver toggle intentionally hidden for now (CPU is the primary workflow)
+		ImGui::Checkbox("Enable Mesh Collision", &gs.enableMeshCollision);
+		ImGui::Checkbox("Enable Curve Collision", &gs.enableCurveCollision);
+		ImGui::SliderFloat("Collision Thickness", &gs.collisionThickness, 0.0001f, 0.02f, "%.4f m");
+		ImGui::SliderFloat("Friction", &gs.collisionFriction, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderInt("Solver Iterations", &gs.solverIterations, 1, 32);
+		ImGui::SliderFloat("Gravity", &gs.gravity, 0.0f, 30.0f, "%.2f m/s^2");
+		float dampingAmount = 1.0f - glm::clamp(gs.damping, 0.0f, 1.0f);
+		if (ImGui::SliderFloat("Damping", &dampingAmount, 0.0f, 1.0f, "%.3f")) {
+			gs.damping = 1.0f - glm::clamp(dampingAmount, 0.0f, 1.0f);
+		}
+		ImGui::SliderFloat("Bend Stiffness", &gs.stiffness, 0.0f, 1.0f, "%.2f");
+		float dragSmooth = 1.0f - glm::clamp(gs.dragLerp, 0.0f, 1.0f);
+		if (ImGui::SliderFloat("Drag Smooth", &dragSmooth, 0.0f, 1.0f, "%.2f")) {
+			gs.dragLerp = 1.0f - glm::clamp(dragSmooth, 0.0f, 1.0f);
+		}
+	} else {
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Hair Settings");
+		ImGui::Separator();
+
+		HairSettings& hs = m_scene->hairSettings();
+		const char* distLabels[] = { "Uniform", "Vertex", "Even" };
+		int distIdx = (int)hs.distribution;
+		if (ImGui::Combo("Distribution", &distIdx, distLabels, IM_ARRAYSIZE(distLabels))) {
+			hs.distribution = (HairDistributionType)distIdx;
+		}
+		const bool vertexMode = (hs.distribution == HairDistributionType::Vertex);
+		if (vertexMode) ImGui::BeginDisabled();
+		int hairCount = hs.hairCount;
+		if (ImGui::InputInt("Number of Hair", &hairCount)) {
+			hs.hairCount = glm::max(0, hairCount);
+		}
+		if (vertexMode) ImGui::EndDisabled();
+
+		ImGui::Text("Distribution Mask: %s", hs.distributionMaskPath.empty() ? "(none)" : hs.distributionMaskPath.c_str());
+		if (ImGui::Button("Load Distribution Mask")) {
+			std::string maskPath;
+			if (FileDialog::openFile(maskPath, "Image Files\0*.png;*.jpg;*.jpeg\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0")) {
+				if (!m_scene->loadHairDistributionMask(maskPath)) {
+					showToast("Failed to load distribution mask");
+				}
+			}
+		}
 		ImGui::SameLine();
-		ImGui::TextDisabled("(mixed)");
-	}
-	bool stepsChanged = ImGui::SliderInt("Steps", &gs.defaultSteps, 2, 64);
-	if (m_selectedStepsMixed) {
+		if (ImGui::Button("Clear##DistMask")) {
+			m_scene->loadHairDistributionMask("");
+		}
+
+		ImGui::Text("Length Mask: %s", hs.lengthMaskPath.empty() ? "(none)" : hs.lengthMaskPath.c_str());
+		if (ImGui::Button("Load Length Mask")) {
+			std::string maskPath;
+			if (FileDialog::openFile(maskPath, "Image Files\0*.png;*.jpg;*.jpeg\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0")) {
+				if (!m_scene->loadHairLengthMask(maskPath)) {
+					showToast("Failed to load length mask");
+				}
+			}
+		}
 		ImGui::SameLine();
-		ImGui::TextDisabled("(mixed)");
-	}
-	ImGui::Checkbox("Mirror mode", &gs.mirrorMode);
-	if (lengthChanged || stepsChanged) {
-		m_scene->guides().applyLengthStepsToSelected(gs.defaultLength, gs.defaultSteps);
-	}
-	
-	ImGui::Spacing();
-	ImGui::TextUnformatted("Simulation");
-	ImGui::Separator();
-	ImGui::Checkbox("Enable Physics Simulation", &gs.enableSimulation);
-	// GPU solver toggle intentionally hidden for now (CPU is the primary workflow)
-	ImGui::Checkbox("Enable Mesh Collision", &gs.enableMeshCollision);
-	ImGui::Checkbox("Enable Curve Collision", &gs.enableCurveCollision);
-	ImGui::SliderFloat("Collision Thickness", &gs.collisionThickness, 0.0001f, 0.02f, "%.4f m");
-	ImGui::SliderFloat("Friction", &gs.collisionFriction, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderInt("Solver Iterations", &gs.solverIterations, 1, 32);
-	ImGui::SliderFloat("Gravity", &gs.gravity, 0.0f, 30.0f, "%.2f m/s^2");
-	float dampingAmount = 1.0f - glm::clamp(gs.damping, 0.0f, 1.0f);
-	if (ImGui::SliderFloat("Damping", &dampingAmount, 0.0f, 1.0f, "%.3f")) {
-		gs.damping = 1.0f - glm::clamp(dampingAmount, 0.0f, 1.0f);
-	}
-	ImGui::SliderFloat("Bend Stiffness", &gs.stiffness, 0.0f, 1.0f, "%.2f");
-	float dragSmooth = 1.0f - glm::clamp(gs.dragLerp, 0.0f, 1.0f);
-	if (ImGui::SliderFloat("Drag Smooth", &dragSmooth, 0.0f, 1.0f, "%.2f")) {
-		gs.dragLerp = 1.0f - glm::clamp(dragSmooth, 0.0f, 1.0f);
+		if (ImGui::Button("Clear##LenMask")) {
+			m_scene->loadHairLengthMask("");
+		}
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Thickness");
+		ImGui::Separator();
+		ImGui::SliderFloat("Root Thickness", &hs.rootThickness, 0.00005f, 0.01f, "%.5f m");
+		ImGui::SliderFloat("Root Extent", &hs.rootExtent, 0.0f, 0.05f, "%.4f m");
+		ImGui::SliderFloat("Hair Thickness", &hs.midThickness, 0.00005f, 0.02f, "%.5f m");
+		ImGui::SliderFloat("Tip Thickness", &hs.tipThickness, 0.00001f, 0.01f, "%.5f m");
+		ImGui::SliderFloat("Tip Extent", &hs.tipExtent, 0.0f, 0.05f, "%.4f m");
 	}
 
 	ImGui::Spacing();
@@ -461,6 +562,21 @@ void App::drawSidePanel() {
 	ImGui::Checkbox("Show Grid", &m_scene->renderSettings().showGrid);
 	ImGui::Checkbox("Show Mesh", &m_scene->renderSettings().showMesh);
 	ImGui::Checkbox("Show Guides", &m_scene->renderSettings().showGuides);
+	ImGui::Checkbox("Show Hair", &m_scene->renderSettings().showHair);
+	{
+		const char* aaLabels[] = { "2x", "4x", "8x" };
+		int aaIdx = 0;
+		int current = m_scene->renderSettings().msaaSamples;
+		if (current == 4) aaIdx = 1;
+		else if (current == 8) aaIdx = 2;
+		if (ImGui::Combo("Anti-Aliasing", &aaIdx, aaLabels, IM_ARRAYSIZE(aaLabels))) {
+			int newSamples = (aaIdx == 0) ? 2 : (aaIdx == 1 ? 4 : 8);
+			if (newSamples != current) {
+				m_scene->renderSettings().msaaSamples = newSamples;
+				showToast("Anti-Aliasing change requires restart");
+			}
+		}
+	}
 	ImGui::SliderFloat("Deselected Opacity", &m_scene->renderSettings().deselectedCurveOpacity, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderFloat("Guide Point Size", &m_scene->renderSettings().guidePointSizePx, 1.0f, 16.0f, "%.1f px");
 
@@ -596,8 +712,8 @@ void App::handleViewportInput() {
 
 	m_camera->handleMouse(alt, lmb, mmb, rmb, (float)io.MouseDelta.x, (float)io.MouseDelta.y, io.MouseWheel);
 
-	// Click-to-spawn / select / drag (only when not navigating)
-	if (!alt) {
+	// Click-to-spawn / select / drag (only when not navigating, and only in Curves module)
+	if (!alt && m_scene->activeModule() == ModuleType::Curves) {
 		m_scene->handleViewportMouse(*m_camera, m_windowWidth, m_windowHeight);
 	}
 

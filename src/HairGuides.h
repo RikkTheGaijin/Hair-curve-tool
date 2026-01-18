@@ -42,6 +42,7 @@ struct HairCurve {
 class HairGuideSet {
 public:
 	void clear();
+	uint64_t version() const { return m_version; }
 
 	size_t curveCount() const { return m_curves.size(); }
 	const HairCurve& curve(size_t idx) const { return m_curves[idx]; }
@@ -76,6 +77,7 @@ private:
 	std::vector<HairCurve> m_curves;
 	std::vector<unsigned char> m_selected; // 1 if selected
 	int m_activeCurve = -1;
+	uint64_t m_version = 0;
 
 	static glm::vec3 evalCatmullRom(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, float t);
 	static void buildCurveRenderPoints(const HairCurve& c, std::vector<glm::vec3>& outPoints);

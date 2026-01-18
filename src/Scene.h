@@ -16,8 +16,45 @@ struct RenderSettings {
 	bool showGrid = true;
 	bool showMesh = true;
 	bool showGuides = true;
+	bool showHair = true;
+	int msaaSamples = 4;
 	float guidePointSizePx = 6.0f;
 	float deselectedCurveOpacity = 1.0f;
+};
+
+enum class ModuleType {
+	Curves = 0,
+	Hair = 1
+};
+
+enum class HairDistributionType {
+	Uniform = 0,
+	Vertex = 1,
+	Even = 2
+};
+
+struct HairSettings {
+	int hairCount = 20000;
+	HairDistributionType distribution = HairDistributionType::Uniform;
+	float rootThickness = 0.0010f;
+	float midThickness = 0.0050f;
+	float tipThickness = 0.0001f;
+	float rootExtent = 0.005f; // meters from root to reach mid thickness
+	float tipExtent = 0.005f;  // meters from tip to taper to tip thickness
+	std::string distributionMaskPath;
+	std::string lengthMaskPath;
+};
+
+struct HairRenderData {
+	std::vector<float> vertices; // pos3, tangent3, t, side
+	std::vector<uint32_t> indices;
+};
+
+struct MaskData {
+	int w = 0;
+	int h = 0;
+	std::vector<unsigned char> pixels; // BGRA8
+	bool valid() const { return w > 0 && h > 0 && !pixels.empty(); }
 };
 
 struct LayerInfo {
@@ -50,6 +87,19 @@ public:
 
 	RenderSettings& renderSettings() { return m_renderSettings; }
 	const RenderSettings& renderSettings() const { return m_renderSettings; }
+
+	ModuleType activeModule() const { return m_activeModule; }
+	void setActiveModule(ModuleType t) { m_activeModule = t; }
+
+	HairSettings& hairSettings() { return m_hairSettings; }
+	const HairSettings& hairSettings() const { return m_hairSettings; }
+
+	bool loadHairDistributionMask(const std::string& path);
+	bool loadHairLengthMask(const std::string& path);
+	void clearHairMasks();
+
+	void buildHairRenderData(HairRenderData& out) const;
+	int lastHairCount() const { return m_lastHairCount; }
 
 	// Layers
 	int activeLayer() const { return m_activeLayer; }
@@ -98,6 +148,8 @@ private:
 	HairGuideSet m_guides;
 	GuideSettings m_guideSettings;
 	RenderSettings m_renderSettings;
+	ModuleType m_activeModule = ModuleType::Curves;
+	HairSettings m_hairSettings;
 
 	std::vector<LayerInfo> m_layers;
 	int m_activeLayer = 0;
@@ -113,6 +165,10 @@ private:
 
 	bool m_gravityOverrideHeld = false;
 	float m_gravityOverrideValue = 9.81f;
+
+	MaskData m_distMask;
+	MaskData m_lenMask;
+	mutable int m_lastHairCount = 0;
 
 	// Mirror mode is transient: only applies to curves created while enabled, and only while they remain selected.
 	std::unordered_map<int, int> m_mirrorPeer;

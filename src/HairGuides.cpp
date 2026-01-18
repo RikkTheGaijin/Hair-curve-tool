@@ -13,6 +13,7 @@ void HairGuideSet::clear() {
 	m_curves.clear();
 	m_selected.clear();
 	m_activeCurve = -1;
+	m_version++;
 }
 
 int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3& bary, const glm::vec3& hitPos, const glm::vec3& hitNormal, const GuideSettings& settings, int layerId, const glm::vec3& color, bool visible) {
@@ -105,6 +106,7 @@ int HairGuideSet::addCurveOnMesh(const Mesh& mesh, int triIndex, const glm::vec3
 
 	m_curves.push_back(std::move(c));
 	m_selected.push_back((unsigned char)0);
+	m_version++;
 	return (int)m_curves.size() - 1;
 }
 
@@ -237,6 +239,7 @@ void HairGuideSet::moveControlPoint(int curveIdx, int vertIdx, const glm::vec3& 
 	// This prevents creating large instantaneous corrections that cause instability
 	c.points[(size_t)vertIdx] = worldPos;
 	c.prevPoints[(size_t)vertIdx] = worldPos;  // Zero velocity for dragged vertex
+	m_version++;
 }
 
 void HairGuideSet::removeCurve(int curveIdx) {
@@ -256,12 +259,14 @@ void HairGuideSet::removeCurve(int curveIdx) {
 	} else if (m_activeCurve > curveIdx) {
 		m_activeCurve--;
 	}
+	m_version++;
 }
 
 void HairGuideSet::removeCurves(const std::vector<int>& curveIndicesDescending) {
 	for (int idx : curveIndicesDescending) {
 		removeCurve(idx);
 	}
+	m_version++;
 }
 
 bool HairGuideSet::isCurveSelected(size_t curveIdx) const {
@@ -272,6 +277,7 @@ bool HairGuideSet::isCurveSelected(size_t curveIdx) const {
 void HairGuideSet::deselectAll() {
 	for (size_t i = 0; i < m_selected.size(); i++) m_selected[i] = 0;
 	m_activeCurve = -1;
+	m_version++;
 }
 
 void HairGuideSet::selectCurve(int curveIdx, bool additive) {
@@ -281,6 +287,7 @@ void HairGuideSet::selectCurve(int curveIdx, bool additive) {
 	}
 	m_selected[(size_t)curveIdx] = 1;
 	m_activeCurve = curveIdx;
+	m_version++;
 }
 
 void HairGuideSet::toggleCurveSelected(int curveIdx) {
@@ -298,6 +305,7 @@ void HairGuideSet::toggleCurveSelected(int curveIdx) {
 			}
 		}
 	}
+	m_version++;
 }
 
 std::vector<int> HairGuideSet::selectedCurves() const {
@@ -541,4 +549,5 @@ void HairGuideSet::applyLengthStepsToSelected(float newLength, int newSteps) {
 		if (!isCurveSelected(ci)) continue;
 		resampleCurveInPlace(m_curves[ci], newLength, newSteps);
 	}
+	m_version++;
 }
